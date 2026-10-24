@@ -66,6 +66,7 @@ class PokemonTcgCatalog(CardCatalog):
                     rarity=card.get("rarity"),
                     language="en",
                     image_url=(card.get("images") or {}).get("small"),
+                    printed_number=pokemon_printed_number(number or "", printed_total),
                 )
             )
         return rank(candidates, query)
@@ -85,7 +86,7 @@ class TcgdexCatalog(CardCatalog):
 
     def __init__(self, client=None) -> None:
         super().__init__(client)
-        self._set_names: dict[str, dict[str, str]] = {}
+        self._sets: dict[str, dict[str, dict]] = {}
         self._set_years: dict[tuple[str, str], int | None] = {}
 
     def _json(self, path: str, params: dict | None = None):
@@ -94,10 +95,12 @@ class TcgdexCatalog(CardCatalog):
             raise self._fail(response)
         return response.json()
 
-    def _set_name(self, lang: str, set_id: str) -> str | None:
-        if lang not in self._set_names:
-            self._set_names[lang] = {s["id"]: s["name"] for s in self._json(f"{lang}/sets")}
-        return self._set_names[lang].get(set_id)
+    def _set(self, lang: str, set_id: str) -> dict | None:
+        """Brief set info {"name", "cardCount": {"official"}}; {} if unknown, None if digital."""
+        if lang not in self._sets:
+            digital = tcgdex_digital_sets(self._client, self.base_url, lang)
+            self._sets[lang] = {s["id"]: (None if s["id"] in digital else s) for s in self._json(f"{lang}/sets")}
+        return self._sets[lang].get(set_id, {})
 
     def _set_year(self, lang: str, set_id: str) -> int | None:
         key = (lang, set_id)
@@ -124,7 +127,10 @@ class TcgdexCatalog(CardCatalog):
                 if number and not _same_number(local_id, number):  # API filter is a substring match
                     continue
                 set_id = card["id"].removesuffix(f"-{local_id}")
-                set_name = self._set_name(lang, set_id)
+                card_set = self._set(lang, set_id)
+                if card_set is None:  # Pokémon TCG Pocket card: not a physical card
+                    continue
+                set_name = card_set.get("name")
                 if not starts_with_words(set_name, query.set_name):
                     continue
                 image = card.get("image")
@@ -139,6 +145,7 @@ class TcgdexCatalog(CardCatalog):
                         number=local_id,
                         language=lang,
                         image_url=f"{image}/low.webp" if image else None,
+                        printed_number=pokemon_printed_number(local_id, (card_set.get("cardCount") or {}).get("official")),
                     )
                 )
             if candidates:
@@ -150,6 +157,29 @@ class TcgdexCatalog(CardCatalog):
                     c.year = years[set_of[c.external_id]]
                 return ranked
         return []
+
+
+# TCGdex also lists Pokémon TCG Pocket (mobile game): digital cards that cannot be graded.
+TCGDEX_DIGITAL_SERIES = ("tcgp",)
+
+
+def tcgdex_digital_sets(client, base_url: str, lang: str) -> set[str]:
+    sets: set[str] = set()
+    for serie in TCGDEX_DIGITAL_SERIES:
+        response = client.get(f"{base_url}/{lang}/series/{serie}")
+        if response.status_code == 200:
+            sets |= {s["id"] for s in response.json().get("sets", [])}
+    return sets
+
+
+def pokemon_printed_number(local_id: str, official_count: int | None) -> str | None:
+    """'4' + 102 -> '4/102' as printed at the bottom of the card. Special numbers ('TG05',
+    'SWSH050') are printed without a regular set total: keep them alone."""
+    if not local_id:
+        return None
+    if local_id.isdigit() and official_count:
+        return f"{local_id}/{official_count}"
+    return local_id
 
 
 def _same_number(a: str, b: str) -> bool:
@@ -195,6 +225,7 @@ class ScryfallCatalog(CardCatalog):
                     rarity=card.get("rarity"),
                     language=card.get("lang"),
                     image_url=images.get("small"),
+                    printed_number=card.get("collector_number"),
                 )
             )
         return rank(candidates, query)
@@ -238,6 +269,7 @@ class YgoProDeckCatalog(CardCatalog):
                         rarity=printing.get("set_rarity"),
                         language="en",
                         image_url=image,
+                        printed_number=code,
                     )
                 )
         return rank(candidates, query)

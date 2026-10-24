@@ -436,7 +436,28 @@ flou, bruit, dominante de couleur, JPEG).
   refaire l'évaluation sur ≥ 100 vraies cartes photographiées au banc optique, puis recalibrer
   les seuils (`identify/visual.py`).
 - Les **réimpressions à illustration identique** (même carte dans plusieurs séries) ne se
-  distinguent pas par l'image : la machine le signale et l'opérateur vérifie série et numéro.
-  Piste : lire le numéro imprimé (OCR) pour départager.
-- Yu‑Gi‑Oh! : l'index contient une entrée par illustration ; l'édition (code de set) est ensuite
-  choisie par recherche texte.
+  distinguent pas par l'image : voir ci-dessous, lecture du numéro imprimé.
+- Yu‑Gi‑Oh! : l'index contient une entrée par illustration ; l'édition est retrouvée par le code
+  de set lu (OCR) + recherche en ligne, sinon choisie par l'opérateur.
+- TCGdex liste aussi **Pokémon TCG Pocket** (jeu mobile, ~2 300 cartes numériques, 15 séries) :
+  exclues de l'index et de la recherche (elles faussaient les résultats : 9 % de l'index d'essai).
+
+### Lecture du numéro imprimé (OCR)
+
+Quand plusieurs éditions sont visuellement à moins de `REPRINT_MARGIN` de la meilleure (ou pour
+Yu‑Gi‑Oh!), la machine lit la bande où le numéro est imprimé (RapidOCR, modèles inclus, hors
+ligne) et cherche une correspondance **exacte** avec le numéro de chaque édition (« 4/102 »,
+« 123 », « LOB-EN005 »). Une seule édition correspond → elle est placée en tête avec le badge
+« Numéro confirmé ».
+
+Évaluation sur **120 cartes réimprimées** (illustration présente dans plusieurs éditions), index
+complet de 19 666 cartes physiques, requêtes en haute résolution passées par le simulateur :
+
+| | Bonne édition en 1er | Numéro confirmé | Confirmée à tort |
+|---|---|---|---|
+| Image seule | 68,3 % | — | — |
+| **Image + numéro imprimé** | **98,3 %** | 100 / 120 | **0** |
+
+Temps : ~1,5 s par carte sur PC quand l'OCR est nécessaire (à mesurer sur le Pi 5). Les 2 cartes
+restantes : numéro non lu → message d'avertissement, l'opérateur choisit. À revalider sur de
+vraies photos (reflets, impression fine des cartes anciennes).

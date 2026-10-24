@@ -77,6 +77,14 @@ def test_builder_downloads_records_failures_and_resumes(tmp_path):
     assert index.count("tcgdex") == 5
 
 
+def test_remove_prefixes_purges_digital_cards(tmp_path):
+    index = VisualIndex(tmp_path / "idx.db")
+    pocket = CardCandidate(source="tcgdex", external_id="en:A1-036", name="Charizard")
+    index.add_many([(ref(1), fingerprint(card_picture(1))), (pocket, fingerprint(card_picture(2)))])
+    assert index.remove_prefixes("tcgdex", ["en:A1-", "en:A1a-"]) == 1
+    assert [m.candidate.external_id for m in index.search("tcgdex", fingerprint(card_picture(2)))] == ["en:set-1"]
+
+
 @pytest.fixture
 def api_with_index(tmp_path):
     index = VisualIndex(tmp_path / "card_index.db")

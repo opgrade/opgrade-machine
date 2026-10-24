@@ -91,7 +91,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS refs (
     catalog TEXT NOT NULL, external_id TEXT NOT NULL,
     name TEXT NOT NULL, set_name TEXT, number TEXT, year INTEGER, rarity TEXT, language TEXT,
-    image_url TEXT, h_full INTEGER NOT NULL, h_art INTEGER NOT NULL,
+    image_url TEXT, h_full INTEGER NOT NULL, h_art INTEGER NOT NULL, printed_number TEXT,
     PRIMARY KEY (catalog, external_id)
 );
 CREATE TABLE IF NOT EXISTS failures (
@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS failures (
     PRIMARY KEY (catalog, external_id)
 );
 """
-_FIELDS = ("external_id", "name", "set_name", "number", "year", "rarity", "language", "image_url")
+# Same order as the CardCandidate fields after `source`.
+_FIELDS = ("external_id", "name", "set_name", "number", "year", "rarity", "language", "image_url", "printed_number")
 
 
 class VisualIndex:
@@ -112,6 +113,9 @@ class VisualIndex:
         self._cache: dict[str, tuple[int, np.ndarray, np.ndarray, list[tuple]]] = {}
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(refs)")}
+            if "printed_number" not in columns:  # index built before OCR support
+                conn.execute("ALTER TABLE refs ADD COLUMN printed_number TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=30)
@@ -129,13 +133,34 @@ class VisualIndex:
     def add_many(self, items: list[tuple[CardCandidate, Fingerprint]]) -> None:
         with self._lock, self._connect() as conn:
             conn.executemany(
-                "INSERT OR REPLACE INTO refs (catalog, external_id, name, set_name, number, year, rarity, language,"
-                " image_url, h_full, h_art) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT OR REPLACE INTO refs (catalog, {', '.join(_FIELDS)}, h_full, h_art)"
+                f" VALUES ({', '.join('?' * (len(_FIELDS) + 3))})",
                 [
                     (c.source, *(getattr(c, f) for f in _FIELDS), _to_sql(fp.full), _to_sql(fp.art))
                     for c, fp in items
                 ],
             )
+
+    def update_metadata(self, cards: list[CardCandidate]) -> int:
+        """Refresh names/sets/numbers of already indexed cards (no image download)."""
+        fields = _FIELDS[1:]
+        with self._lock, self._connect() as conn:
+            cur = conn.executemany(
+                f"UPDATE refs SET {', '.join(f'{f} = ?' for f in fields)} WHERE catalog = ? AND external_id = ?",
+                [(*(getattr(c, f) for f in fields), c.source, c.external_id) for c in cards],
+            )
+            return cur.rowcount
+
+    def remove_prefixes(self, catalog: str, prefixes: list[str]) -> int:
+        """Delete entries whose external_id starts with one of the prefixes."""
+        removed = 0
+        with self._lock, self._connect() as conn:
+            for prefix in prefixes:
+                escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                removed += conn.execute(
+                    "DELETE FROM refs WHERE catalog = ? AND external_id LIKE ? ESCAPE '\\'", (catalog, escaped + "%")
+                ).rowcount
+        return removed
 
     def add_failure(self, catalog: str, external_id: str, image_url: str | None, error: str) -> None:
         with self._lock, self._connect() as conn:

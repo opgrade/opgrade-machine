@@ -114,12 +114,15 @@ $("#card-type").addEventListener("change", () => {
   refreshSim();
 });
 
+const shownNumber = (c) => c.printed_number || c.number;
+
 function showCandidates(r) {
   identifyMessage(r.message || `${r.candidates.length} résultat(s) — touchez la bonne carte.`);
   $("#candidates").innerHTML = r.candidates.map((c, i) => `
     <li data-i="${i}">${c.image_url ? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}
-      <b>${esc(c.name)}</b><br>${esc(c.set_name)}${c.number ? " · " + esc(c.number) : ""}${c.year ? " · " + c.year : ""}
-      ${c.confidence ? `<br><span class="conf ${c.confidence}">${CONFIDENCE_LABELS[c.confidence]}</span>` : ""}</li>`).join("");
+      <b>${esc(c.name)}</b><br>${esc(c.set_name)}${shownNumber(c) ? " · " + esc(shownNumber(c)) : ""}${c.year ? " · " + c.year : ""}
+      ${c.confidence ? `<br><span class="conf ${c.confidence}">${CONFIDENCE_LABELS[c.confidence]}</span>` : ""}
+      ${c.number_match ? `<br><span class="conf high">Numéro confirmé ✓</span>` : ""}</li>`).join("");
   $("#candidates").results = r.candidates;
 }
 
@@ -157,7 +160,7 @@ $("#candidates").addEventListener("click", async (e) => {
   }
   cardForm.name.value = c.name;
   cardForm.set_name.value = c.set_name || "";
-  cardForm.card_number.value = c.number || "";
+  cardForm.card_number.value = shownNumber(c) || "";
   cardForm.year.value = c.year || "";
   cardForm.rarity.value = c.rarity || "";
   cardForm.external_source.value = c.source;
@@ -165,7 +168,7 @@ $("#candidates").addEventListener("click", async (e) => {
   cardForm.reference_image_url.value = c.image_url || "";
   const img = $("#identified-img");
   if (c.image_url) img.src = c.image_url; else img.removeAttribute("src");
-  $("#identified-text").textContent = [c.name, c.set_name, c.number, c.year].filter(Boolean).join(" · ");
+  $("#identified-text").textContent = [c.name, c.set_name, shownNumber(c), c.year].filter(Boolean).join(" · ");
   $("#identified").hidden = false;
   $("#candidates").innerHTML = ""; identifyMessage("");
 });

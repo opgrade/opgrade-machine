@@ -56,6 +56,7 @@ TCGDEX_CARDS = {
             {"id": "ex14-4", "localId": "4", "name": "Charizard δ", "image": "https://assets.tcgdex.net/en/ex/ex14/4"},
             {"id": "sm9-14", "localId": "14", "name": "Charizard", "image": "https://assets.tcgdex.net/en/sm/sm9/14"},
             {"id": "30th-c-001", "localId": "001", "name": "Charizard"},
+            {"id": "A1-036", "localId": "036", "name": "Charizard", "image": "https://assets.tcgdex.net/en/tcgp/A1/036"},
         ],
     },
     "fr": {
@@ -63,7 +64,9 @@ TCGDEX_CARDS = {
     },
 }
 TCGDEX_SETS = {"base1": ("Base Set", "1999-01-09"), "ex14": ("Crystal Guardians", "2006-08-30"),
-               "sm9": ("Team Up", "2019-02-01"), "30th-c": ("30th Celebration", "2026-02-27")}
+               "sm9": ("Team Up", "2019-02-01"), "30th-c": ("30th Celebration", "2026-02-27"),
+               "A1": ("Genetic Apex", "2024-10-30")}
+TCGDEX_OFFICIAL = {"base1": 102, "ex14": 100, "sm9": 181}
 
 
 def tcgdex_handler(request: httpx.Request) -> httpx.Response:
@@ -72,8 +75,12 @@ def tcgdex_handler(request: httpx.Request) -> httpx.Response:
     if resource == "cards":
         name = request.url.params["name"].lower()
         return httpx.Response(200, json=TCGDEX_CARDS.get(lang, {}).get(name, []))
+    if resource == "series":  # only the digital series is ever requested
+        return httpx.Response(200, json={"id": parts[4], "sets": [{"id": "A1", "name": "Genetic Apex"}]})
     if len(parts) == 4:
-        return httpx.Response(200, json=[{"id": k, "name": v[0]} for k, v in TCGDEX_SETS.items()])
+        return httpx.Response(200, json=[
+            {"id": k, "name": v[0], "cardCount": {"official": TCGDEX_OFFICIAL.get(k)}} for k, v in TCGDEX_SETS.items()
+        ])
     name, date = TCGDEX_SETS[parts[4]]
     return httpx.Response(200, json={"id": parts[4], "name": name, "releaseDate": date})
 
@@ -89,6 +96,8 @@ def test_tcgdex_set_name_year_and_image():
         "en:base1-4", "Charizard", "Base Set", "4", 1999, "en",
     )
     assert first.image_url == "https://assets.tcgdex.net/en/base/base1/4/low.webp"
+    assert first.printed_number == "4/102"
+    assert all(not c.external_id.startswith("en:A1-") for c in found)  # TCG Pocket: digital only
     promo = next(c for c in found if c.external_id == "en:30th-c-001")
     assert promo.set_name == "30th Celebration" and promo.image_url is None
 

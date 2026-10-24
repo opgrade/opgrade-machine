@@ -39,6 +39,9 @@ class CardCandidate:
     rarity: str | None = None
     language: str | None = None
     image_url: str | None = None
+    # Number exactly as printed on the card, used to confirm the printing by OCR:
+    # "4/102" (Pokémon), "123" (Magic collector number), "LOB-EN005" (Yu-Gi-Oh! set code).
+    printed_number: str | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)

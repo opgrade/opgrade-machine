@@ -16,13 +16,22 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from .base import CardCandidate, year_from
+from .catalogs import pokemon_printed_number, tcgdex_digital_sets
+
+
+def tcgdex_excluded_prefixes(client: httpx.Client, lang: str = "en") -> list[str]:
+    """external_id prefixes of digital (Pokémon TCG Pocket) cards, to purge an existing index."""
+    return [f"{lang}:{s}-" for s in tcgdex_digital_sets(client, "https://api.tcgdex.net/v2", lang)]
 
 Reference = tuple[CardCandidate, str]  # (card, image URL to fingerprint)
 
 
 def tcgdex_references(client: httpx.Client, lang: str = "en") -> Iterator[Reference]:
     base = "https://api.tcgdex.net/v2"
-    sets = {s["id"]: s["name"] for s in client.get(f"{base}/{lang}/sets").raise_for_status().json()}
+    digital = tcgdex_digital_sets(client, base, lang)
+    brief_sets = [s for s in client.get(f"{base}/{lang}/sets").raise_for_status().json() if s["id"] not in digital]
+    sets = {s["id"]: s["name"] for s in brief_sets}
+    official = {s["id"]: (s.get("cardCount") or {}).get("official") for s in brief_sets}
 
     def set_year(set_id: str) -> int | None:
         try:
@@ -38,6 +47,8 @@ def tcgdex_references(client: httpx.Client, lang: str = "en") -> Iterator[Refere
             continue
         local_id = card.get("localId", "")
         set_id = card["id"].removesuffix(f"-{local_id}")
+        if set_id in digital:
+            continue
         yield (
             CardCandidate(
                 source="tcgdex",
@@ -48,6 +59,7 @@ def tcgdex_references(client: httpx.Client, lang: str = "en") -> Iterator[Refere
                 year=years.get(set_id),
                 language=lang,
                 image_url=f"{card['image']}/low.webp",
+                printed_number=pokemon_printed_number(local_id, official.get(set_id)),
             ),
             f"{card['image']}/low.webp",
         )
@@ -108,6 +120,7 @@ def _scryfall_reference(card: dict) -> Reference | None:
             rarity=card.get("rarity"),
             language=card.get("lang"),
             image_url=images.get("small") or url,
+            printed_number=card.get("collector_number"),
         ),
         url,
     )

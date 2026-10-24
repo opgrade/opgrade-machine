@@ -23,7 +23,9 @@ from ..hardware import Hardware, Side, build_hardware
 from ..hardware.sim import SimCardSpec, SimulatedCamera
 from ..identify import CardCatalog, CardQuery, CatalogError, build_catalog
 from ..identify.base import USER_AGENT
-from ..identify.visual import REPRINT_MARGIN, VisualIndex, fingerprint
+from ..identify.ocr import NumberReader
+from ..identify.recognize import CardRecognizer
+from ..identify.visual import VisualIndex
 from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
 from . import schemas
 
@@ -33,6 +35,7 @@ def create_app(
     hardware: Hardware | None = None,
     catalogs: dict[str, CardCatalog] | None = None,
     visual_index: VisualIndex | None = None,
+    number_reader: NumberReader | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     hardware = hardware or build_hardware(settings.simulation)
@@ -43,6 +46,8 @@ def create_app(
         if catalog_id not in catalogs:
             catalogs[catalog_id] = build_catalog(catalog_id)
         return catalogs[catalog_id]
+
+    recognizer = CardRecognizer(visual_index, number_reader or NumberReader(), get_catalog)
     session_factory = init_db(make_engine(settings))
     service = GradingService(settings, hardware, load_rules(settings.rules_path))
 
@@ -158,21 +163,14 @@ def create_app(
         except AcquisitionError as exc:
             return {"catalog": catalog, "available": True, "message": f"Capture refusée : {exc}", "candidates": []}
 
-        matches = visual_index.search(catalog, fingerprint(detection.warped))
-        candidates = [{**m.candidate.as_dict(), "distance": m.distance, "confidence": m.confidence} for m in matches]
-        if not matches or matches[0].confidence == "low":
-            message = "Carte non reconnue avec certitude : vérifiez les propositions ou recherchez par nom."
-        elif matches[0].confidence == "medium":
-            message = "Reconnaissance incertaine : vérifiez la carte proposée."
-        elif len(matches) > 1 and matches[1].distance - matches[0].distance <= REPRINT_MARGIN:
-            # Same artwork reprinted in several sets: the image alone cannot tell them apart.
-            message = (
-                "Plusieurs éditions ont la même illustration : vérifiez la série et le numéro "
-                "imprimés sur la carte avant de choisir."
-            )
-        else:
-            message = "Carte reconnue — confirmez en touchant la bonne carte."
-        return {"catalog": catalog, "available": True, "message": message, "candidates": candidates}
+        result = recognizer.recognize(detection.warped, catalog)
+        return {
+            "catalog": catalog,
+            "available": True,
+            "message": result.message,
+            "candidates": result.candidates,
+            "ocr_text": result.ocr_text,
+        }
 
     @app.post("/api/cards", response_model=schemas.CardOut, status_code=201)
     def create_card(body: schemas.CardIn, db: Session = Depends(get_db)):

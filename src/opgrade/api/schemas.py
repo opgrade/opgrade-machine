@@ -144,6 +144,9 @@ class CandidateOut(BaseModel):
     # Image recognition only: fingerprint distance (0 = identical, 128 = max) and its reading.
     distance: int | None = None
     confidence: Literal["high", "medium", "low"] | None = None
+    printed_number: str | None = None
+    # True when the number read on the card (OCR) matches this printing.
+    number_match: bool | None = None
 
 
 class IdentifyImageIn(BaseModel):
@@ -159,6 +162,7 @@ class IdentifyOut(BaseModel):
     available: bool
     message: str | None
     candidates: list[CandidateOut]
+    ocr_text: str | None = None  # raw text read near the printed number (for checking)
 
 
 class SimCardIn(BaseModel):

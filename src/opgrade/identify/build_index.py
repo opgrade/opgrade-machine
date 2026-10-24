@@ -22,7 +22,7 @@ import numpy as np
 
 from ..config import Settings
 from .base import USER_AGENT
-from .sources import SOURCES, Reference
+from .sources import SOURCES, Reference, tcgdex_excluded_prefixes
 from .visual import Fingerprint, VisualIndex, fingerprint
 
 BATCH = 200
@@ -79,12 +79,22 @@ def build(
     return added, failed
 
 
+def _batched(items: Iterable, size: int = 1000):
+    it = iter(items)
+    while batch := list(itertools.islice(it, size)):
+        yield batch
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Construit l'index visuel des cartes de référence.")
     parser.add_argument("catalog", choices=sorted(SOURCES))
     parser.add_argument("--lang", default="en", help="langue TCGdex (en, fr…)")
     parser.add_argument("--limit", type=int, default=None, help="nombre max de nouvelles cartes (essai)")
     parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument(
+        "--refresh-metadata", action="store_true",
+        help="met à jour noms/séries/numéros des cartes déjà indexées, sans retélécharger les images",
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
@@ -94,6 +104,14 @@ def main(argv: list[str] | None = None) -> int:
     references = source(client, args.lang) if args.catalog == "tcgdex" else source(client)
 
     print(f"Index : {index.path} — catalogue {args.catalog} ({index.count(args.catalog)} déjà indexées)")
+    if args.catalog == "tcgdex":
+        removed = index.remove_prefixes("tcgdex", tcgdex_excluded_prefixes(client, args.lang))
+        if removed:
+            print(f"Cartes numériques (Pokémon TCG Pocket) retirées : {removed}")
+    if args.refresh_metadata:
+        updated = sum(index.update_metadata([card for card, _ in batch]) for batch in _batched(references))
+        print(f"Métadonnées mises à jour : {updated} cartes.")
+        return 0
     added, failed = build(index, references, client, workers=args.workers, limit=args.limit)
     print(f"Terminé : {added} ajoutées, {failed} échecs, {index.count(args.catalog)} au total.")
     return 0
