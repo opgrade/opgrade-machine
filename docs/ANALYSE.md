@@ -385,7 +385,7 @@ La V1 est « fonctionnelle » quand **tous** ces critères sont vérifiés par d
 | 4 | Protection | Analyse **hors protection** uniquement | Instruction opérateur « retirer la carte de sa protection » |
 | 5 | Données de référence | Pas d'expert ; **cartes déjà gradées** (PSA/BGS/CGC) | Lot de référence = vérité terrain ; saisir la note officielle + n° de certification ; l'annotation fine des défauts reste à faire en interne |
 | 6–7 | Matériel acheté | Raspberry Pi 5, **Arducam IMX477**, objectif **CS 6 mm (1/2,3")**, **écran tactile 7"** | Voir note objectif ci-dessous |
-| 8 | Identification | **Reconnaissance automatique tôt** | Module `identify/` : recherche par nom/numéro dans des bases publiques (Pokémon TCG API, Scryfall pour Magic, YGOPRODeck pour Yu‑Gi‑Oh!) puis, plus tard, reconnaissance par image. Sport : pas de base ouverte équivalente → saisie manuelle |
+| 8 | Identification | **Reconnaissance automatique tôt** | ✅ Module `identify/` : recherche par nom/numéro/série dans TCGdex (Pokémon, FR+EN), Scryfall (Magic), YGOPRODeck (Yu‑Gi‑Oh!). La Pokémon TCG API, testée le 2026-10-24, échouait sur ~50 % des requêtes : elle reste disponible en alternative. Étape suivante : reconnaissance par l'image capturée. Sport : pas de base ouverte équivalente → saisie manuelle |
 | 9 | Langue | **Français + anglais** | Interface et rapports bilingues (fichiers de traduction) |
 | 10 | Loi 25 | **Minimum + consentement** | Client = nom + 1 moyen de contact ; date de consentement enregistrée ; suppression/anonymisation sur demande |
 | 11 | Licence | **Propriétaire**, dépôt privé | Déjà indiqué dans le README |

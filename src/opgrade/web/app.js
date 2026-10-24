@@ -87,6 +87,63 @@ async function selectClient(client) {
 }
 
 // -- Carte ------------------------------------------------------------------------------
+const cardForm = $("#card-form");
+const IDENTITY_FIELDS = ["rarity", "external_source", "external_id", "reference_image_url"];
+
+function selectedCardType() {
+  return state.cardTypes.find((t) => t.id === Number(cardForm.card_type_id.value));
+}
+
+function identifyMessage(text) {
+  const m = $("#identify-message"); m.textContent = text || ""; m.hidden = !text;
+}
+
+function clearIdentity() {
+  IDENTITY_FIELDS.forEach((n) => (cardForm[n].value = ""));
+  $("#identified").hidden = true;
+}
+
+$("#card-type").addEventListener("change", () => {
+  const type = selectedCardType();
+  clearIdentity(); $("#candidates").innerHTML = "";
+  $("#btn-identify").hidden = !(type && type.catalog);
+  identifyMessage(type && !type.catalog ? "Pas de catalogue en ligne pour ce type : saisie manuelle." : "");
+});
+
+$("#btn-identify").addEventListener("click", (e) => busy(e.target, async () => {
+  const name = cardForm.name.value.trim();
+  if (name.length < 2) { identifyMessage("Tapez au moins 2 lettres du nom de la carte."); return; }
+  const params = new URLSearchParams({ card_type_id: cardForm.card_type_id.value, name });
+  if (cardForm.card_number.value.trim()) params.set("number", cardForm.card_number.value.trim());
+  if (cardForm.set_name.value.trim()) params.set("set_name", cardForm.set_name.value.trim());
+  identifyMessage("Recherche…");
+  const r = await api("GET", "/api/identify?" + params);
+  identifyMessage(r.message || `${r.candidates.length} résultat(s) — touchez la bonne carte.`);
+  $("#candidates").innerHTML = r.candidates.map((c, i) => `
+    <li data-i="${i}">${c.image_url ? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}
+      <b>${esc(c.name)}</b><br>${esc(c.set_name)}${c.number ? " · " + esc(c.number) : ""}${c.year ? " · " + c.year : ""}</li>`).join("");
+  $("#candidates").results = r.candidates;
+}));
+
+$("#candidates").addEventListener("click", (e) => {
+  const li = e.target.closest("li"); if (!li) return;
+  const c = $("#candidates").results[Number(li.dataset.i)];
+  cardForm.name.value = c.name;
+  cardForm.set_name.value = c.set_name || "";
+  cardForm.card_number.value = c.number || "";
+  cardForm.year.value = c.year || "";
+  cardForm.rarity.value = c.rarity || "";
+  cardForm.external_source.value = c.source;
+  cardForm.external_id.value = c.external_id;
+  cardForm.reference_image_url.value = c.image_url || "";
+  const img = $("#identified-img");
+  if (c.image_url) img.src = c.image_url; else img.removeAttribute("src");
+  $("#identified-text").textContent = [c.name, c.set_name, c.number, c.year].filter(Boolean).join(" · ");
+  $("#identified").hidden = false;
+  $("#candidates").innerHTML = ""; identifyMessage("");
+});
+$("#btn-unidentify").addEventListener("click", clearIdentity);
+
 $("#card-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target)); for (const k in body) if (!body[k]) body[k] = null;
@@ -95,7 +152,7 @@ $("#card-form").addEventListener("submit", async (e) => {
   try {
     const card = await api("POST", "/api/cards", body);
     openSession(await api("POST", "/api/sessions", { card_id: card.id }));
-    e.target.reset();
+    e.target.reset(); clearIdentity(); identifyMessage(""); $("#btn-identify").hidden = true;
   } catch (err) { toast(err.message); }
 });
 

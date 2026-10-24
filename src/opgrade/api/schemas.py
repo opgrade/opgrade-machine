@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+CatalogId = Literal["tcgdex", "pokemontcg", "scryfall", "ygoprodeck"]  # keep in sync with identify.CATALOGS
 
 
 class ORM(BaseModel):
@@ -31,6 +34,7 @@ class CardTypeIn(BaseModel):
     height_mm: float = Field(gt=20, lt=200)
     thickness_mm: float | None = None
     has_border: bool = True
+    catalog: CatalogId | None = None
 
 
 class CardTypeOut(ORM, CardTypeIn):
@@ -46,6 +50,10 @@ class CardIn(BaseModel):
     year: int | None = None
     card_number: str | None = None
     language: str | None = None
+    rarity: str | None = None
+    external_source: CatalogId | None = None
+    external_id: str | None = Field(default=None, max_length=100)
+    reference_image_url: str | None = Field(default=None, max_length=500, pattern=r"^https://")
     notes: str | None = None
 
 
@@ -121,6 +129,25 @@ class ReviewIn(BaseModel):
     surface: float = Grade
     centering_override: float | None = Field(default=None, ge=1, le=10, multiple_of=0.5)
     operator: str | None = None
+
+
+class CandidateOut(BaseModel):
+    source: str
+    external_id: str
+    name: str
+    set_name: str | None
+    number: str | None
+    year: int | None
+    rarity: str | None
+    language: str | None
+    image_url: str | None
+
+
+class IdentifyOut(BaseModel):
+    catalog: str | None
+    available: bool
+    message: str | None
+    candidates: list[CandidateOut]
 
 
 class SimCardIn(BaseModel):

@@ -49,6 +49,18 @@
         <input name="set_name" placeholder="Série / collection">
         <input name="year" type="number" min="1900" max="2100" placeholder="Année">
         <input name="card_number" placeholder="Numéro (ex. 25/102)">
+        <input type="hidden" name="rarity">
+        <input type="hidden" name="external_source">
+        <input type="hidden" name="external_id">
+        <input type="hidden" name="reference_image_url">
+        <button id="btn-identify" type="button" hidden>Rechercher dans le catalogue</button>
+        <p id="identify-message" class="muted" hidden></p>
+        <div id="identified" class="identified" hidden>
+          <img id="identified-img" alt="">
+          <div><b>Carte identifiée</b><br><span id="identified-text"></span></div>
+          <button id="btn-unidentify" type="button">Effacer</button>
+        </div>
+        <ul id="candidates" class="candidates"></ul>
         <button class="primary" type="submit">Commencer la capture</button>
       </form>
       <button data-go="client">Retour</button>

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -18,13 +18,24 @@ from ..data import Capture, Card, CardType, Client, GradingSession, init_db, mak
 from ..grading import load_rules
 from ..hardware import Hardware, Side, build_hardware
 from ..hardware.sim import SimCardSpec, SimulatedCamera
+from ..identify import CardCatalog, CardQuery, CatalogError, build_catalog
 from ..orchestration import GradingService, InvalidTransition, WorkflowError
 from . import schemas
 
 
-def create_app(settings: Settings | None = None, hardware: Hardware | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    hardware: Hardware | None = None,
+    catalogs: dict[str, CardCatalog] | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     hardware = hardware or build_hardware(settings.simulation)
+    catalogs = dict(catalogs or {})
+
+    def get_catalog(catalog_id: str) -> CardCatalog:
+        if catalog_id not in catalogs:
+            catalogs[catalog_id] = build_catalog(catalog_id)
+        return catalogs[catalog_id]
     session_factory = init_db(make_engine(settings))
     service = GradingService(settings, hardware, load_rules(settings.rules_path))
 
@@ -94,6 +105,32 @@ def create_app(settings: Settings | None = None, hardware: Hardware | None = Non
         db.add(ct)
         db.commit()
         return ct
+
+    @app.get("/api/identify", response_model=schemas.IdentifyOut)
+    def identify(
+        card_type_id: int,
+        name: str = Query(min_length=2, max_length=100),
+        number: str | None = Query(default=None, max_length=30),
+        set_name: str | None = Query(default=None, max_length=100),
+        db: Session = Depends(get_db),
+    ):
+        card_type = db.get(CardType, card_type_id)
+        if card_type is None:
+            raise HTTPException(404, "Type de carte introuvable.")
+        if not card_type.catalog:
+            return {
+                "catalog": None,
+                "available": False,
+                "message": "Pas de catalogue en ligne pour ce type de carte : saisie manuelle.",
+                "candidates": [],
+            }
+        try:
+            catalog = get_catalog(card_type.catalog)
+            found = catalog.search(CardQuery(name=name, number=number or None, set_name=set_name or None))
+        except CatalogError as exc:
+            return {"catalog": card_type.catalog, "available": False, "message": f"{exc} Saisie manuelle.", "candidates": []}
+        message = None if found else "Aucune carte trouvée. Vérifiez l'orthographe ou saisissez manuellement."
+        return {"catalog": card_type.catalog, "available": True, "message": message, "candidates": [c.as_dict() for c in found]}
 
     @app.post("/api/cards", response_model=schemas.CardOut, status_code=201)
     def create_card(body: schemas.CardIn, db: Session = Depends(get_db)):

@@ -37,7 +37,8 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 | `orchestration/` | Machine à états d'une session de gradation (`state_machine.py`) et service qui l'exécute (`service.py`) |
 | `vision/` | Détection/redressement de la carte, contrôle qualité image, centrage, détection de retournement |
 | `grading/` | Règles versionnées (`src/opgrade/rules/grading_rules.yaml`) et moteur de calcul de la note |
-| `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes) |
+| `identify/` | Identification en ligne : TCGdex (Pokémon, FR+EN), Scryfall (Magic), YGOPRODeck (Yu‑Gi‑Oh!), Pokémon TCG API (alternative). Catalogue choisi par `CardType.catalog` |
+| `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes), mini-migration (ajout de colonnes) |
 | `api/` | Application FastAPI et routes |
 | `web/` | Interface tactile (statique) |
 
@@ -46,7 +47,8 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 - Note finale en **entiers 1–10**. Cartes analysées **hors protection** uniquement.
 - Formats V1 : 63×88, 63,5×88,9, 59×86 et cartes épaisses.
 - Clients : comptoir, boutiques et envois postaux → prévoir commandes/lots.
-- Identification automatique tôt (Pokémon TCG API, Scryfall, YGOPRODeck) ; sport en saisie manuelle.
+- Identification automatique tôt (TCGdex, Scryfall, YGOPRODeck) ; sport en saisie manuelle.
+  Elle n'est jamais bloquante : catalogue hors ligne ou en erreur → saisie manuelle.
 - Interface et rapports **FR + EN**. Loi 25 : données client minimales + consentement.
 - Matériel : Pi 5, Arducam IMX477, objectif CS 6 mm, écran tactile 7".
 - Référence de qualité : cartes déjà gradées PSA/BGS/CGC (pas d'expert interne).
@@ -72,7 +74,10 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 
 Fait : simulation caméra/éclairage, base SQLite, clients/types/cartes, machine à états avec
 retournement manuel guidé, contrôle qualité image, mesure du centrage, moteur de notation,
-API + UI tactile minimale, tests.
+identification par nom/numéro/série dans les catalogues en ligne, API + UI tactile, tests.
+
+Les tests de `identify/` simulent HTTP (`httpx.MockTransport`) avec des réponses calquées sur les
+vraies API ; revérifier en direct quand on touche un adaptateur.
 
 À faire ensuite (voir docs/ANALYSE.md §9) : capture réelle picamera2 + calibration ChArUco,
 utilisateurs/rôles + journal d'audit, rapport PDF + QR, multi-éclairage, administration.
