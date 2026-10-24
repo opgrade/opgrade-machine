@@ -192,6 +192,20 @@ class MeasurementOut(ORM):
     unit: str
 
 
+class DefectOut(ORM):
+    side: str
+    criterion: str
+    kind: str
+    x_mm: float
+    y_mm: float
+    w_mm: float
+    h_mm: float
+    length_mm: float
+    area_mm2: float
+    severity: str
+    lighting: str | None
+
+
 class SubgradeOut(ORM):
     criterion: str
     value: float
@@ -222,6 +236,7 @@ class SessionOut(ORM):
     captures: list[CaptureOut]
     measurements: list[MeasurementOut]
     subgrades: list[SubgradeOut]
+    defects: list[DefectOut] = []
 
 
 class CaptureResult(BaseModel):
@@ -284,6 +299,8 @@ class SimCardIn(BaseModel):
     height_mm: float = 88.0
     rotation_deg: float = Field(1.5, ge=-20, le=20)
     blur: float = Field(0, ge=0, le=10)
+    # Random surface damage on the front (scratches and dents), seen under raking light.
+    random_defects: int = Field(0, ge=0, le=10)
 
 
 # -- accounts --------------------------------------------------------------------------------

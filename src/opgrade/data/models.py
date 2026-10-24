@@ -177,6 +177,7 @@ class GradingSession(Base):
     captures: Mapped[list["Capture"]] = relationship(back_populates="session", cascade="all, delete-orphan")
     measurements: Mapped[list["Measurement"]] = relationship(cascade="all, delete-orphan")
     subgrades: Mapped[list["Subgrade"]] = relationship(cascade="all, delete-orphan")
+    defects: Mapped[list["Defect"]] = relationship(cascade="all, delete-orphan")
 
 
 class Capture(Base):
@@ -291,3 +292,25 @@ class Calibration(Base):
     uniformity: Mapped[float | None] = mapped_column(Float)
     warnings: Mapped[list | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class Defect(Base):
+    """Defect found by the machine on one face (surface relief for now), in mm on the face."""
+
+    __tablename__ = "defects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("grading_sessions.id"))
+    side: Mapped[str] = mapped_column(String(10))
+    criterion: Mapped[str] = mapped_column(String(30))  # surface (corners/edges later)
+    kind: Mapped[str] = mapped_column(String(30))  # scratch | mark
+    x_mm: Mapped[float] = mapped_column(Float)
+    y_mm: Mapped[float] = mapped_column(Float)
+    w_mm: Mapped[float] = mapped_column(Float)
+    h_mm: Mapped[float] = mapped_column(Float)
+    length_mm: Mapped[float] = mapped_column(Float)
+    area_mm2: Mapped[float] = mapped_column(Float)
+    contrast: Mapped[float] = mapped_column(Float)
+    severity: Mapped[str] = mapped_column(String(20))  # minor | moderate | major
+    lighting: Mapped[str | None] = mapped_column(String(30))
+    source: Mapped[str] = mapped_column(String(20), default="auto")

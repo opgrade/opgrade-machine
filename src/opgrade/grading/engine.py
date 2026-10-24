@@ -21,6 +21,17 @@ class CenteringRules(BaseModel):
     fallback_grade: float = 1
 
 
+class SurfaceStep(BaseModel):
+    max_score: float
+    grade: float
+
+
+class SurfaceSuggestion(BaseModel):
+    back_weight: float = 0.5
+    steps: list[SurfaceStep]
+    fallback_grade: float = 1
+
+
 class Scale(BaseModel):
     min: float = 1
     max: float = 10
@@ -34,6 +45,7 @@ class GradingRules(BaseModel):
     cap_above_min_subgrade: float = 1
     centering: CenteringRules
     review_confidence_threshold: float = 0.8
+    surface_suggestion: SurfaceSuggestion | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "GradingRules":
@@ -62,6 +74,18 @@ def centering_grade(rules: GradingRules, front_worst_share: float, back_worst_sh
         _grade_from_table(front_worst_share, c.front, c.fallback_grade),
         _grade_from_table(back_worst_share, c.back, c.fallback_grade),
     )
+
+
+def suggest_surface_grade(rules: GradingRules, front_score: float, back_score: float) -> float | None:
+    """Surface grade proposed to the operator from raking-light defect points (None if no rule)."""
+    s = rules.surface_suggestion
+    if s is None:
+        return None
+    score = front_score + s.back_weight * back_score
+    for step in sorted(s.steps, key=lambda st: st.max_score):
+        if score <= step.max_score:
+            return step.grade
+    return s.fallback_grade
 
 
 @dataclass

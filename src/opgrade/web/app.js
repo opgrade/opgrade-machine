@@ -652,7 +652,7 @@ function openSession(session, message, accepted = true) {
   ins.textContent = message || session.last_message;
   ins.className = "instruction" + (accepted ? "" : " error");
   for (const side of ["front", "back"]) {
-    const cap = session.captures.find((c) => c.side === side);
+    const cap = session.captures.find((c) => c.side === side && c.lighting === "diffuse");
     const img = $("#img-" + side);
     if (cap) img.src = `/api/captures/${cap.id}/image?t=${cap.id}`; else img.removeAttribute("src");
   }
@@ -688,6 +688,10 @@ async function refreshSim() {
   document.querySelectorAll(".sim-label").forEach((el) => (el.textContent = t.label ? "« " + t.label + " »" : "carte synthétique"));
 }
 $("#sim-flip").addEventListener("click", async () => { await api("POST", "/api/sim/flip"); refreshSim(); });
+$("#sim-damaged").addEventListener("click", async () => {
+  await api("POST", "/api/sim/place", { random_defects: 3 });
+  refreshSim();
+});
 $("#sim-random").addEventListener("click", async () => {
   const r = () => Math.round(40 + Math.random() * 25);
   await api("POST", "/api/sim/place", { front_left_share: r(), front_top_share: r(), back_left_share: r(), back_top_share: r() });
@@ -705,7 +709,31 @@ function renderReview() {
   const form = $("#review-form");
   gradeOptions(form.centering_override, true);
   ["corners", "edges", "surface"].forEach((n) => gradeOptions(form[n], false));
+  renderSurface(s, form);
   show("review");
+}
+
+const SEVERITY = { minor: "mineur", moderate: "moyen", major: "majeur" };
+const DEFECT_KIND = { scratch: "rayure", mark: "marque / creux" };
+const SIDE_LABEL = { front: "Recto", back: "Verso" };
+const LIGHT_LABEL = { raking_north: "lumière nord", raking_south: "lumière sud", raking_east: "lumière est", raking_west: "lumière ouest" };
+
+function renderSurface(s, form) {
+  const analysed = s.measurements.some((m) => m.name === "surface_defect_score");
+  $("#surface-info").hidden = !analysed;
+  if (!analysed) return;
+  const suggestion = s.measurements.find((m) => m.name === "surface_suggested_grade");
+  $("#surface-summary").textContent = `— ${s.defects.length} défaut(s) détecté(s)` +
+    (suggestion ? ` · note proposée : ${suggestion.value} (à confirmer)` : "");
+  if (suggestion) form.surface.value = String(suggestion.value);  // pre-selected, operator decides
+  for (const side of ["front", "back"]) $("#surface-" + side).src = `/api/sessions/${s.id}/surface/${side}.png?t=${s.id}`;
+  const bySide = { front: 0, back: 0 };
+  $("#surface-defects").innerHTML = s.defects.map((d) => {
+    bySide[d.side] += 1;
+    const size = d.kind === "scratch" ? `${d.length_mm.toFixed(1)} mm` : `${d.area_mm2.toFixed(1)} mm²`;
+    return `<li class="sev-${d.severity}">${SIDE_LABEL[d.side]} n° ${bySide[d.side]} : ${DEFECT_KIND[d.kind] || d.kind},
+      ${size}, <b>${SEVERITY[d.severity]}</b> <span class="muted">(${esc(LIGHT_LABEL[d.lighting] || d.lighting || "")})</span></li>`;
+  }).join("") || '<li class="muted">Aucun défaut de surface détecté.</li>';
 }
 
 $("#review-form").addEventListener("submit", async (e) => {

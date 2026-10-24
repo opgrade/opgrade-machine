@@ -67,5 +67,7 @@ a { color: var(--accent); }
 .cal-preview { margin: 16px 0; } .cal-preview img { max-width: 100%; max-height: 420px; border-radius: 8px; }
 .cal-preview img:not([src]) { display: none; }
 .warn-list { color: var(--warn); }
+.defects { margin: 8px 0 0; padding-left: 0; list-style: none; font-size: .9rem; }
+.defects .sev-major b { color: var(--danger); } .defects .sev-moderate b { color: var(--warn); }
 .toast.ok { background: var(--ok); color: #111; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--danger); padding: 14px 22px; border-radius: 10px; max-width: 90%; }

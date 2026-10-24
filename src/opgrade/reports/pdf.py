@@ -44,6 +44,11 @@ CRITERIA = [
     ("surface", "Surface / Surface"),
 ]
 SOURCES = {"auto": "mesure machine", "operator": "opérateur", "model": "modèle IA"}
+PX_PER_MM = 10.0  # canonical rectified images
+DEFECT_COLOURS = {"minor": (0, 200, 255), "moderate": (0, 140, 255), "major": (0, 0, 230)}  # BGR
+DEFECT_KINDS = {"scratch": "rayure", "mark": "marque / creux"}
+SEVERITIES = {"minor": "mineur", "moderate": "moyen", "major": "majeur"}
+MAX_LISTED_DEFECTS = 8
 DISCLAIMER = (
     "Note propre à OpGrade, établie selon les règles et la version indiquées ; elle ne constitue pas une "
     "prédiction de note PSA, BGS, CGC ou d'un autre organisme. / OpGrade's own grade, produced under the "
@@ -56,7 +61,8 @@ def _txt(value) -> str:
     return str(value if value is not None else "").encode("cp1252", "replace").decode("cp1252")
 
 
-def _annotated(path: Path) -> tuple[ImageReader | None, object]:
+def _annotated(path: Path, defects: list = ()) -> tuple[ImageReader | None, object]:
+    """Rectified photo with measured borders (green) and numbered surface defects (orange/red)."""
     image = cv2.imread(str(path))
     if image is None:
         return None, None
@@ -67,6 +73,12 @@ def _annotated(path: Path) -> tuple[ImageReader | None, object]:
     y0, y1 = int(result.top_px), int(h - result.bottom_px)
     for p1, p2 in (((x0, 0), (x0, h)), ((x1, 0), (x1, h)), ((0, y0), (w, y0)), ((0, y1), (w, y1))):
         cv2.line(out, p1, p2, GREEN, 4, cv2.LINE_AA)  # visible once the photo is scaled down
+    for n, d in enumerate(defects, 1):
+        colour = DEFECT_COLOURS.get(d.severity, DEFECT_COLOURS["minor"])
+        a = (int(d.x_mm * PX_PER_MM) - 6, int(d.y_mm * PX_PER_MM) - 6)
+        b = (int((d.x_mm + d.w_mm) * PX_PER_MM) + 6, int((d.y_mm + d.h_mm) * PX_PER_MM) + 6)
+        cv2.rectangle(out, a, b, colour, 4)
+        cv2.putText(out, str(n), (a[0], max(a[1] - 8, 24)), cv2.FONT_HERSHEY_SIMPLEX, 1.0, colour, 3)
     # JPEG keeps the PDF small (a few hundred KB); measurements use the lossless originals.
     ok, jpeg = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 88])
     return ImageReader(io.BytesIO(jpeg.tobytes())), result
@@ -176,12 +188,13 @@ def build_report(session: GradingSession, data_dir: Path, verify_url: str | None
     y -= 10
     photo_h, gap = 228, 14
     photo_w = photo_h * 63 / 88
-    captures = {cap.side: cap for cap in session.captures}
+    captures = {cap.side: cap for cap in session.captures if cap.lighting == "diffuse"}
+    defects = {side: [d for d in session.defects if d.side == side] for side in ("front", "back")}
     centering = {}
     for i, (side, label) in enumerate((("front", "Recto / Front"), ("back", "Verso / Back"))):
         px = MARGIN + i * (photo_w + gap)
         cap = captures.get(side)
-        reader, result = _annotated(data_dir / cap.warped_path) if cap else (None, None)
+        reader, result = _annotated(data_dir / cap.warped_path, defects[side]) if cap else (None, None)
         centering[side] = result
         if reader:
             c.drawImage(reader, px, y - photo_h, photo_w, photo_h, preserveAspectRatio=True, anchor="c")
@@ -220,8 +233,35 @@ def build_report(session: GradingSession, data_dir: Path, verify_url: str | None
     for item in session.explanation or []:
         ry = write(f"- {item}", ry) - 3
 
+    # -- surface defects (raking light) ------------------------------------------------------
+    ty = y - photo_h - 34
+    analysed = any(m.name == "surface_defect_score" for m in session.measurements)
+    if analysed:
+        c.setFillColor(INK)
+        c.setFont("Helvetica-Bold", 9)
+        total = len(session.defects)
+        c.drawString(MARGIN, ty, f"Défauts de surface (éclairage rasant, 4 directions) / Surface defects : {total}")
+        ty -= 12
+        c.setFont("Helvetica", 8)
+        listed = [(side, n, d) for side in ("front", "back") for n, d in enumerate(defects[side], 1)]
+        for side, n, d in listed[:MAX_LISTED_DEFECTS]:
+            size = f"{d.length_mm:.1f} mm" if d.kind == "scratch" else f"{d.area_mm2:.1f} mm²"
+            c.setFillColor(INK)
+            c.drawString(MARGIN + 6, ty, _txt(f"{'Recto' if side == 'front' else 'Verso'} n° {n} : "
+                                             f"{DEFECT_KINDS.get(d.kind, d.kind)}, {size}, "
+                                             f"{SEVERITIES.get(d.severity, d.severity)}"))
+            ty -= 10
+        if not listed:
+            c.setFillColor(MUTED)
+            c.drawString(MARGIN + 6, ty, "Aucun défaut de surface détecté.")
+            ty -= 10
+        elif len(listed) > MAX_LISTED_DEFECTS:
+            c.setFillColor(MUTED)
+            c.drawString(MARGIN + 6, ty, f"... et {len(listed) - MAX_LISTED_DEFECTS} autre(s).")
+            ty -= 10
+        ty -= 12
+
     # -- traceability ------------------------------------------------------------------------
-    ty = y - photo_h - 38
     c.setStrokeColor(LINE)
     c.line(MARGIN, ty + 14, PAGE_W - MARGIN, ty + 14)
     c.setFillColor(INK)

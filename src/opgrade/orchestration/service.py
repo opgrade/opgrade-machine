@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
+import numpy as np
 from sqlalchemy.orm import Session
 
 from ..calibration.charuco import undistort
 from ..calibration.store import ActiveCalibration
 from ..config import Settings
 from ..customers.orders import refresh_status
-from ..data.models import Capture, Card, CardType, GradingSession, Measurement, Subgrade
-from ..grading import GradingRules, centering_grade, compute_final_grade
+from ..data.models import Capture, Card, CardType, Defect, GradingSession, Measurement, Subgrade
+from ..grading import GradingRules, centering_grade, compute_final_grade, suggest_surface_grade
 from ..hardware.base import Hardware, LightingMode, Side
 from ..reports.certificates import assign_certificate
 from ..vision import (
+    CardDetection,
     DetectionError,
+    QualityReport,
     assess_quality,
     detect_card,
     find_card_quad,
@@ -27,6 +30,7 @@ from ..vision import (
     measure_centering,
     rectify,
 )
+from ..vision.surface import analyze_surface, annotate_surface
 from .state_machine import CAPTURE_SIDE, INSTRUCTIONS, SessionState, check_transition
 
 log = logging.getLogger(__name__)
@@ -41,11 +45,28 @@ class AcquisitionError(Exception):
     """No usable card image (no card, wrong format, blur…). Message is operator-facing (French)."""
 
 
+RAKING_LIGHTS = (LightingMode.RAKING_NORTH, LightingMode.RAKING_SOUTH, LightingMode.RAKING_EAST, LightingMode.RAKING_WEST)
+
+
+@dataclass
+class Acquisition:
+    raw: np.ndarray  # main (diffuse) photo, lens-corrected
+    detection: CardDetection  # card outline + rectified main photo
+    quality: QualityReport
+    # Same card position under other lights, rectified with the SAME outline: pixel-aligned.
+    extra: dict[LightingMode, np.ndarray] = field(default_factory=dict)
+
+
 @dataclass
 class CaptureOutcome:
     accepted: bool
     message: str
     capture: Capture | None = None
+
+
+def surface_image_path(gs: GradingSession, side: Side) -> str:
+    """Annotated surface image (diffuse photo + relief map + numbered defects), relative path."""
+    return (Path("images") / gs.uuid / f"{side.value}_surface.png").as_posix()
 
 
 class GradingService:
@@ -87,8 +108,8 @@ class GradingService:
     def _abs(self, rel: str) -> Path:
         return self.settings.data_dir / rel
 
-    def _load_warped(self, gs: GradingSession, side: Side):
-        cap = next((c for c in gs.captures if c.side == side.value), None)
+    def _load_warped(self, gs: GradingSession, side: Side, lighting: LightingMode = LightingMode.DIFFUSE):
+        cap = next((c for c in gs.captures if c.side == side.value and c.lighting == lighting.value), None)
         if cap is None:
             raise WorkflowError(f"Face manquante : {side.value}.")
         img = cv2.imread(str(self._abs(cap.warped_path)))
@@ -96,12 +117,13 @@ class GradingService:
             raise WorkflowError(f"Image illisible : {cap.warped_path}.")
         return img
 
-    def acquire(self, card_type: CardType, lighting: LightingMode = LightingMode.DIFFUSE):
-        """Light, shoot, find and rectify the card, check image quality.
-
-        Returns (raw, detection, quality); raises AcquisitionError with the operator message.
+    def acquire(self, card_type: CardType, lighting: LightingMode = LightingMode.DIFFUSE,
+                extra_lights: tuple[LightingMode, ...] = ()) -> Acquisition:
+        """Light, shoot, find and rectify the card, check image quality, then (optionally) shoot
+        the same position under `extra_lights`. Raises AcquisitionError with the operator message.
         """
         silhouette = None
+        extra_raw: dict[LightingMode, np.ndarray] = {}
         try:
             if self.hardware.has_backlight:
                 # Silhouette first: locates any card, even black-bordered ones on the black tray.
@@ -109,6 +131,9 @@ class GradingService:
                 silhouette = self.hardware.camera.capture()
             self.hardware.lighting.set_mode(lighting)
             raw = self.hardware.camera.capture()
+            for light in extra_lights:
+                self.hardware.lighting.set_mode(light)
+                extra_raw[light] = self.hardware.camera.capture()
         finally:
             self.hardware.lighting.off()
         # Straight edges and true proportions before any measurement (6 mm lens: strong barrel).
@@ -126,7 +151,9 @@ class GradingService:
         quality = assess_quality(detection.warped)
         if not quality.ok:
             raise AcquisitionError(" ".join(quality.problems))
-        return raw, detection, quality
+        extra = {light: rectify(self._correct_lens(image), detection.quad, w, h).warped
+                 for light, image in extra_raw.items()}
+        return Acquisition(raw, detection, quality, extra)
 
     # -- workflow --------------------------------------------------------------------------
 
@@ -160,10 +187,12 @@ class GradingService:
             raise WorkflowError("Aucune capture n'est attendue à cette étape.")
 
         lighting = LightingMode.DIFFUSE
+        extra_lights = RAKING_LIGHTS if self.settings.raking_capture else ()
         try:
-            raw, detection, quality = self.acquire(gs.card.card_type, lighting)
+            acq = self.acquire(gs.card.card_type, lighting, extra_lights)
         except AcquisitionError as exc:
             return self._reject(db, gs, str(exc))
+        raw, detection, quality = acq.raw, acq.detection, acq.quality
 
         if side == Side.BACK and looks_like_same_side(self._load_warped(gs, Side.FRONT), detection.warped):
             return self._reject(db, gs, "La carte ne semble pas avoir été retournée. RETOURNEZ la carte puis recommencez.")
@@ -185,6 +214,13 @@ class GradingService:
             sharpness=quality.sharpness,
         )
         gs.captures.append(cap)
+        for light, warped in acq.extra.items():
+            rel = (rel_dir / f"{side.value}_{light.value}.png").as_posix()
+            cv2.imwrite(str(self._abs(rel)), warped)
+            # Raking: only the rectified image is kept (a raw 12 MP PNG per light is too slow on the Pi).
+            gs.captures.append(Capture(side=side.value, lighting=light.value, raw_path=rel, warped_path=rel,
+                                       width_px=warped.shape[1], height_px=warped.shape[0],
+                                       sharpness=quality.sharpness))
         self._move(gs, SessionState.AWAIT_BACK if side == Side.FRONT else SessionState.READY_TO_ANALYZE)
         db.commit()
         return CaptureOutcome(True, gs.last_message or "", cap)
@@ -223,11 +259,42 @@ class GradingService:
         gs.confidence = confidence
         gs.needs_review = True  # corners/edges/surface come from the operator in V1
         message = INSTRUCTIONS[SessionState.AWAIT_REVIEW]
+        surface = self._analyze_surface(gs)
+        if surface is not None:
+            message += f" Surface : {surface} défaut(s) détecté(s) sous éclairage rasant."
         if confidence < self.rules.review_confidence_threshold:
             message += " ATTENTION : centrage mesuré avec une faible confiance, vérifiez-le."
         self._move(gs, SessionState.AWAIT_REVIEW, message)
         db.commit()
         return gs
+
+    def _analyze_surface(self, gs: GradingSession) -> int | None:
+        """Raking-light defects on both faces; stores them and a SUGGESTED surface grade (the
+        operator still decides). Returns the number of defects, or None without raking captures."""
+        scores = {}
+        for side in (Side.FRONT, Side.BACK):
+            raking = {
+                light.value: self._load_warped(gs, side, light)
+                for light in RAKING_LIGHTS
+                if any(c.side == side.value and c.lighting == light.value for c in gs.captures)
+            }
+            if not raking:
+                return None
+            diffuse = self._load_warped(gs, side)
+            result = analyze_surface(diffuse, raking)
+            for d in result.defects:
+                gs.defects.append(Defect(side=side.value, criterion="surface", source="auto", **{
+                    k: getattr(d, k) for k in ("kind", "x_mm", "y_mm", "w_mm", "h_mm", "length_mm", "area_mm2",
+                                               "contrast", "severity", "lighting")}))
+            cv2.imwrite(str(self._abs(surface_image_path(gs, side))), annotate_surface(diffuse, result))
+            scores[side] = result.score
+            gs.measurements.append(Measurement(side=side.value, name="surface_defect_score",
+                                               value=result.score, unit="points"))
+        suggestion = suggest_surface_grade(self.rules, scores[Side.FRONT], scores[Side.BACK])
+        if suggestion is not None:
+            gs.measurements.append(Measurement(side=None, name="surface_suggested_grade",
+                                               value=suggestion, unit="grade"))
+        return len(gs.defects)
 
     def submit_review(
         self,

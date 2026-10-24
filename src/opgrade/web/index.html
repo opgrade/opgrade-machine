@@ -296,6 +296,7 @@
         <b>Simulation</b> — plateau : <span id="sim-state"></span> <span class="sim-label muted"></span>
         <button id="sim-flip">Retourner la carte</button>
         <button id="sim-random">Placer une nouvelle carte (centrage aléatoire)</button>
+        <button id="sim-damaged">Placer une carte rayée</button>
       </div>
     </section>
 
@@ -304,6 +305,14 @@
       <h1>5. Révision</h1>
       <div id="review-instruction" class="instruction"></div>
       <div id="centering-info" class="card-info"></div>
+      <div id="surface-info" class="card-info" hidden>
+        <b>Surface (éclairage rasant)</b> <span id="surface-summary"></span>
+        <div class="previews">
+          <figure><img id="surface-front" alt=""><figcaption>Recto</figcaption></figure>
+          <figure><img id="surface-back" alt=""><figcaption>Verso</figcaption></figure>
+        </div>
+        <ul id="surface-defects" class="defects"></ul>
+      </div>
       <form id="review-form" class="grades">
         <label>Centrage <select name="centering_override"></select></label>
         <label>Coins <select name="corners" required></select></label>

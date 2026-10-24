@@ -614,3 +614,60 @@ haut/bas est décalé de **0,8 point** ; avec la calibration : 88,0 mm et 0,0 po
 Validé **en simulation seulement** (objectif, mire en 3D, dominante de couleur, vignettage
 simulés ; `OPGRADE_SIM_OPTICS=1`) : focale retrouvée à 0,1 %, k1 à 0,01, échelle 10,00 px/mm,
 inclinaison de 8° détectée. À refaire sur la machine réelle.
+
+---
+
+## 20. Capture multi-éclairage et défauts de surface
+
+### Séquence de capture (par face)
+
+Silhouette (rétroéclairage) → **diffus** → **rasant nord, sud, est, ouest**. Toutes les images
+sont redressées avec **le même contour de carte** : elles sont alignées au pixel près (la carte
+ne bouge pas). Seule l'image diffuse brute est gardée en entier ; pour les rasantes, seule
+l'image redressée est conservée (12 Mpx en PNG ×4 serait trop lent sur le Pi). Désactivable :
+`OPGRADE_RAKING=0`.
+
+### Détection (`vision/surface.py`), sans apprentissage
+
+1. rasant ÷ diffus : l'impression (identique dans les deux) s'annule, il reste le **relief** ;
+2. division par un flou large : supprime la décroissance de la lumière à travers la carte ;
+3. **double test par pixel** : variation relative ≥ 3,5 % **et** ≥ 6 × le bruit mesuré (en niveaux
+   de gris) — le bruit du capteur est constant en niveaux de gris et paraît énorme dans les zones
+   sombres ; sans ce test : 14 fausses alertes par carte, avec : 0,05 ;
+4. regroupement des fragments (une rayure interrompue par de l'encre noire reste un défaut),
+   mesure (longueur, surface), type (rayure / marque-creux) et gravité (mineur, moyen, majeur).
+
+Bordure de 2,5 mm exclue (relève des critères coins/bordures) ; encre très sombre exclue
+(rapport non significatif).
+
+**4 directions sont nécessaires** : une rayure parallèle à la lumière est invisible (test
+automatisé : avec les seules lumières est/ouest, une rayure horizontale n'est pas vue).
+
+### Résultats en simulation (`scripts/eval_surface.py`)
+
+40 vraies cartes (images TCGdex), relief simulé, bruit capteur σ = 2 niveaux de gris :
+
+| | Résultat |
+|---|---|
+| Fausses alertes sur cartes propres | 2 sur 40 cartes (0,05 par carte) |
+| Rayure contraste rasant ≈ 8 % (pente 0,02) | 22 / 40 |
+| Rayure ≈ 12 % (pente 0,03) | 35 / 40 |
+| Rayure ≈ 20 % (pente 0,05) | 39 / 40 |
+| Rayure ≈ 32 % (pente 0,08) | 40 / 40 |
+| Longueur mesurée (rayures de 29,2 et 30 mm) | 29,5 à 30,4 mm |
+
+**Limites** : le simulateur n'a ni brillance, ni foil, ni holographie — principales sources de
+fausses alertes attendues sur de vraies cartes ; la texture du carton apparaîtra comme du bruit
+(le seuil s'y adapte). Résolution 10 px/mm : les micro-rayures plus fines qu'environ 0,1 mm ne
+sont pas visibles ; pistes : moyenner plusieurs images par éclairage (bruit ÷ √n), analyse à
+20 px/mm, polariseurs croisés.
+
+### Note de surface
+
+Points par défaut (mineur 1, moyen 3, majeur 6 ; verso × 0,5) → note **proposée** par le barème
+`surface_suggestion` des règles (version **2026.10-2**). Elle est pré-sélectionnée à l'écran de
+révision ; **l'opérateur décide**. Barème initial non étalonné : à ajuster sur des cartes déjà
+gradées.
+
+Écran de révision : images annotées recto/verso (carte du relief en rouge, défauts numérotés),
+liste des défauts. Rapport PDF : défauts encadrés sur les photos et liste numérotée.

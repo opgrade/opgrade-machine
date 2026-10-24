@@ -37,6 +37,101 @@ class SimCardSpec:
     front_image: np.ndarray | None = field(default=None, repr=False)
     label: str | None = None  # what the card really is, shown in the simulation panel
     brightness: float = 1.0  # lighting variation between captures
+    # Surface relief, visible mainly under raking light (scratches, dents).
+    defects: list[SimDefect] = field(default_factory=list)
+
+
+@dataclass
+class SimDefect:
+    """Relief on one face, in mm from that face's top-left corner.
+
+    `slope` is the steepest slope of the relief: real hairline scratches are ~0.02–0.1.
+    Under raking light (~14° elevation) a slope s changes brightness by about 4·s.
+    """
+
+    kind: str  # "scratch" (from x,y to x2,y2) | "dent" (centred on x,y, radius = width_mm)
+    x_mm: float
+    y_mm: float
+    x2_mm: float = 0.0
+    y2_mm: float = 0.0
+    width_mm: float = 0.2
+    slope: float = 0.08
+    side: Side = Side.FRONT
+
+
+def random_sim_defects(count: int, seed: int | None = None) -> list[SimDefect]:
+    """Random visible scratches and dents on the front, away from the edges."""
+    rng = np.random.default_rng(seed)
+    defects = []
+    for _ in range(count):
+        x, y = rng.uniform(10, 53), rng.uniform(10, 78)
+        if rng.random() < 0.7:
+            angle, length = rng.uniform(0, np.pi), rng.uniform(4, 20)
+            defects.append(SimDefect("scratch", x, y, float(np.clip(x + length * np.cos(angle), 6, 57)),
+                                     float(np.clip(y + length * np.sin(angle), 6, 82)),
+                                     width_mm=float(rng.uniform(0.12, 0.25)), slope=float(rng.uniform(0.04, 0.08))))
+        else:
+            defects.append(SimDefect("dent", x, y, width_mm=float(rng.uniform(0.6, 1.5)), slope=float(rng.uniform(0.04, 0.07))))
+    return defects
+
+
+RAKING_DIRECTIONS = {  # where the light comes FROM, in image coordinates (y down)
+    LightingMode.RAKING_NORTH: (0.0, -1.0),
+    LightingMode.RAKING_SOUTH: (0.0, 1.0),
+    LightingMode.RAKING_EAST: (1.0, 0.0),
+    LightingMode.RAKING_WEST: (-1.0, 0.0),
+}
+RAKING_ELEVATION = 0.25  # light vector z component (≈ 14°): grazing
+RAKING_LEVEL = 0.7  # raking images are darker than diffuse ones
+RAKING_FALLOFF = 0.2  # the side nearer the light is brighter
+
+
+def _height_map(spec: SimCardSpec, side: Side, shape: tuple[int, int]) -> np.ndarray | None:
+    defects = [d for d in spec.defects if d.side == side]
+    if not defects:
+        return None
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    height = np.zeros(shape, np.float32)
+    for d in defects:
+        sigma = max(d.width_mm * SIM_PX_PER_MM / 2, 0.5)
+        x1, y1 = d.x_mm * SIM_PX_PER_MM, d.y_mm * SIM_PX_PER_MM
+        if d.kind == "scratch":
+            x2, y2 = d.x2_mm * SIM_PX_PER_MM, d.y2_mm * SIM_PX_PER_MM
+            vx, vy = x2 - x1, y2 - y1
+            t = np.clip(((xx - x1) * vx + (yy - y1) * vy) / max(vx * vx + vy * vy, 1e-6), 0, 1)
+            dist2 = (xx - (x1 + t * vx)) ** 2 + (yy - (y1 + t * vy)) ** 2
+        else:
+            dist2 = (xx - x1) ** 2 + (yy - y1) ** 2
+        # Gaussian groove/pit of width sigma; max slope ≈ 0.6 · amplitude / sigma.
+        height -= (d.slope * sigma / 0.6) * np.exp(-dist2 / (2 * sigma * sigma))
+    return height
+
+
+def _shade(face: np.ndarray, spec: SimCardSpec, side: Side, lighting: LightingMode) -> np.ndarray:
+    raking = lighting in RAKING_DIRECTIONS
+    height = _height_map(spec, side, face.shape[:2])
+    if not raking and height is None:
+        return face
+    h, w = face.shape[:2]
+    if height is None:
+        gx = gy = np.zeros((h, w), np.float32)
+    else:
+        gy, gx = np.gradient(height)
+    norm = np.sqrt(gx * gx + gy * gy + 1)
+    if not raking:  # diffuse light from above: only the (tiny) tilt of the normal matters
+        return np.clip(face * (1 / norm)[..., None], 0, 255).astype(np.uint8)
+    # Light direction from canvas to face coordinates (the card is rotated on the tray).
+    theta = np.radians(spec.rotation_deg)
+    cx, cy = RAKING_DIRECTIONS[lighting]
+    lx = np.cos(theta) * cx - np.sin(theta) * cy
+    ly = np.sin(theta) * cx + np.cos(theta) * cy
+    light = np.array([lx, ly, RAKING_ELEVATION]) / np.linalg.norm([lx, ly, RAKING_ELEVATION])
+    lambert = (-gx * light[0] - gy * light[1] + light[2]) / norm / light[2]  # 1 on a flat surface
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    towards_light = ((xx / w - 0.5) * lx + (yy / h - 0.5) * ly) * 2  # -1 far side .. 1 near side
+    factor = RAKING_LEVEL * np.clip(lambert, 0, None) * (1 + RAKING_FALLOFF * towards_light)
+    return np.clip(face * factor[..., None], 0, 255).astype(np.uint8)
 
 
 @dataclass
@@ -127,7 +222,7 @@ def render_scene(spec: SimCardSpec | None, side: Side, lighting: LightingMode) -
     else:
         canvas = np.clip(rng.normal(14, 3, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
     if spec is not None:
-        face = _render_face(spec, side)
+        face = _shade(_render_face(spec, side), spec, side, lighting)
         h, w = face.shape[:2]
         cx, cy = CANVAS_W / 2, CANVAS_H / 2
         m = cv2.getRotationMatrix2D((w / 2, h / 2), spec.rotation_deg, 1.0)

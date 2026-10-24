@@ -35,6 +35,8 @@ class Settings:
     public_verification: bool = False
     # Simulation only: lens distortion, colour cast and vignetting, to rehearse calibration.
     sim_optics: bool = False
+    # Capture the 4 raking lights after the diffuse one, to reveal surface relief.
+    raking_capture: bool = True
     database_url: str = field(default="")
 
     def __post_init__(self) -> None:
@@ -61,4 +63,5 @@ class Settings:
             verify_url=os.environ.get("OPGRADE_VERIFY_URL") or None,
             public_verification=_env_bool("OPGRADE_PUBLIC_VERIFY", False),
             sim_optics=_env_bool("OPGRADE_SIM_OPTICS", False),
+            raking_capture=_env_bool("OPGRADE_RAKING", True),
         )

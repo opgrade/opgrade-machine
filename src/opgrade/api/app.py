@@ -22,13 +22,14 @@ from ..customers.orders import check_card_can_join
 from ..data import Capture, Card, CardType, Client, GradingSession, Order, init_db, make_engine
 from ..grading import load_rules
 from ..hardware import Hardware, Side, build_hardware
-from ..hardware.sim import SimCardSpec, SimulatedCamera
+from ..hardware.sim import SimCardSpec, SimulatedCamera, random_sim_defects
 from ..identify import CardCatalog, CardQuery, CatalogError, build_catalog
 from ..identify.base import USER_AGENT
 from ..identify.ocr import NumberReader
 from ..identify.recognize import CardRecognizer
 from ..identify.visual import VisualIndex
 from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
+from ..orchestration.service import surface_image_path
 from ..auth import AuthError, audit
 from ..data import User
 from . import auth as auth_api
@@ -176,7 +177,7 @@ def create_app(
                 "candidates": [],
             }
         try:
-            _, detection, _ = service.acquire(card_type)
+            detection = service.acquire(card_type).detection
         except AcquisitionError as exc:
             return {"catalog": catalog, "available": True, "message": f"Capture refusée : {exc}", "candidates": []}
 
@@ -261,6 +262,15 @@ def create_app(
             raise HTTPException(404, "Image introuvable.")
         return FileResponse(path, media_type="image/png")
 
+    @app.get("/api/sessions/{session_id}/surface/{side}.png")
+    def surface_image(session_id: int, side: Side, db: Session = Depends(get_db)):
+        """Diffuse photo with the raking-light relief map and numbered defects."""
+        gs = get_session(db, session_id)
+        path = settings.data_dir / surface_image_path(gs, side)
+        if not path.exists():
+            raise HTTPException(404, "Pas d'analyse de surface pour cette face.")
+        return FileResponse(path, media_type="image/png")
+
     # -- simulation -----------------------------------------------------------------------
 
     if hardware.simulated and isinstance(hardware.camera, SimulatedCamera):
@@ -294,7 +304,9 @@ def create_app(
 
         @app.post("/api/sim/place")
         def sim_place(body: schemas.SimCardIn | None = None) -> dict:
-            spec = SimCardSpec(**body.model_dump()) if body else SimCardSpec()
+            fields = body.model_dump() if body else {}
+            n_defects = fields.pop("random_defects", 0)
+            spec = SimCardSpec(**fields, defects=random_sim_defects(n_defects))
             table.place(spec, Side.FRONT)
             return sim_table()
 
