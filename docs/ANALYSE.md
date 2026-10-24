@@ -375,21 +375,28 @@ La V1 est « fonctionnelle » quand **tous** ces critères sont vérifiés par d
 
 ---
 
-## 14. Questions ouvertes (à trancher par OpGrade)
+## 14. Décisions d'OpGrade (2026-10-24)
 
-1. **Clients** : qui sont-ils (particuliers au comptoir, boutiques, envois postaux) ? Faut-il un
-   numéro de commande/lot regroupant plusieurs cartes ?
-2. **Échelle** : entiers 1–10 seulement, ou demi-points (8,5) comme BGS ? (Le code supporte les
-   demi-points en interne.)
-3. **Formats prioritaires** pour la V1 : Pokémon et sport standard (63×88 mm) seulement, ou aussi
-   Yu‑Gi‑Oh! (59×86 mm) et cartes épaisses (patch/relic) ?
-4. **Cartes en toploader/sleeve** : analyse hors protection uniquement (recommandé) ?
-5. **Expert** : avez-vous accès à un grader expérimenté pour étiqueter le jeu de données ?
-6. **Écran** : écran tactile intégré à la machine (7") ou tablette/PC à côté ?
-7. **Matériel déjà acheté** : quelle caméra/objectif précis, quel écran ?
-8. **Identification de la carte** : saisie manuelle en V1, ou reconnaissance automatique
-   (recherche dans une base type Pokémon TCG API) souhaitée tôt ?
-9. **Langue** de l'interface et des rapports : français seulement, ou FR/EN ?
-10. **Données personnelles** des clients (Loi 25 au Québec) : quelles données conserver, combien
-    de temps, consentement ?
-11. **Dépôt GitHub** : privé ? Licence (propriétaire, recommandé vu la section 23) ?
+| # | Sujet | Décision | Conséquence technique |
+|---|---|---|---|
+| 1 | Clients | Particuliers au comptoir **et** boutiques/revendeurs **et** envois postaux | Ajouter une notion de **commande/lot** (plusieurs cartes, statut réception → gradée → retournée, n° de suivi) |
+| 2 | Échelle | **Entiers 1–10** pour la note finale | Déjà le cas ; sous-notes en demi-points conservées en interne |
+| 3 | Formats V1 | Pokémon/Magic 63×88, sport 63,5×88,9, Yu‑Gi‑Oh! 59×86, **cartes épaisses** | Plateau à gabarits interchangeables ; profils avec épaisseur ; cartes épaisses = mise au point/hauteur à valider (risque) |
+| 4 | Protection | Analyse **hors protection** uniquement | Instruction opérateur « retirer la carte de sa protection » |
+| 5 | Données de référence | Pas d'expert ; **cartes déjà gradées** (PSA/BGS/CGC) | Lot de référence = vérité terrain ; saisir la note officielle + n° de certification ; l'annotation fine des défauts reste à faire en interne |
+| 6–7 | Matériel acheté | Raspberry Pi 5, **Arducam IMX477**, objectif **CS 6 mm (1/2,3")**, **écran tactile 7"** | Voir note objectif ci-dessous |
+| 8 | Identification | **Reconnaissance automatique tôt** | Module `identify/` : recherche par nom/numéro dans des bases publiques (Pokémon TCG API, Scryfall pour Magic, YGOPRODeck pour Yu‑Gi‑Oh!) puis, plus tard, reconnaissance par image. Sport : pas de base ouverte équivalente → saisie manuelle |
+| 9 | Langue | **Français + anglais** | Interface et rapports bilingues (fichiers de traduction) |
+| 10 | Loi 25 | **Minimum + consentement** | Client = nom + 1 moyen de contact ; date de consentement enregistrée ; suppression/anonymisation sur demande |
+| 11 | Licence | **Propriétaire**, dépôt privé | Déjà indiqué dans le README |
+
+### Note sur l'objectif 6 mm
+
+Avec le capteur IMX477 (6,29 × 4,71 mm), un objectif 6 mm doit être à **~10 cm** de la carte
+pour la cadrer (~100 mm de champ). C'est un grand-angle : distorsion en barillet marquée,
+perspective plus forte sur les bords, peu de place pour l'éclairage rasant, et la distance de
+mise au point minimale de certains 6 mm est justement autour de 10–20 cm (à vérifier).
+
+**Recommandation** : l'utiliser pour les premiers essais (la calibration corrige la distorsion),
+mais prévoir un objectif **12 mm ou 16 mm** (~19 ou ~25 cm de distance), plus adapté à la
+mesure. Résolution attendue dans tous les cas : ~40 px/mm si la carte remplit le champ.

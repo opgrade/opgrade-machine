@@ -41,6 +41,16 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 | `api/` | Application FastAPI et routes |
 | `web/` | Interface tactile (statique) |
 
+## Décisions produit (détail : docs/ANALYSE.md §14)
+
+- Note finale en **entiers 1–10**. Cartes analysées **hors protection** uniquement.
+- Formats V1 : 63×88, 63,5×88,9, 59×86 et cartes épaisses.
+- Clients : comptoir, boutiques et envois postaux → prévoir commandes/lots.
+- Identification automatique tôt (Pokémon TCG API, Scryfall, YGOPRODeck) ; sport en saisie manuelle.
+- Interface et rapports **FR + EN**. Loi 25 : données client minimales + consentement.
+- Matériel : Pi 5, Arducam IMX477, objectif CS 6 mm, écran tactile 7".
+- Référence de qualité : cartes déjà gradées PSA/BGS/CGC (pas d'expert interne).
+
 ## Règles du projet (non négociables)
 
 1. **Le métier ne dépend jamais du matériel** : orchestration/grading n'importent que
