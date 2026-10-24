@@ -32,6 +32,8 @@ from ..orchestration import AcquisitionError, GradingService, InvalidTransition,
 from ..auth import AuthError, audit
 from ..data import User
 from . import auth as auth_api
+from ..calibration.store import load_active
+from . import calibration as calibration_api
 from . import customers, reports, schemas
 from .auth import client_ip, current_user, require_admin
 
@@ -44,7 +46,7 @@ def create_app(
     number_reader: NumberReader | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    hardware = hardware or build_hardware(settings.simulation)
+    hardware = hardware or build_hardware(settings.simulation, settings.sim_optics)
     catalogs = dict(catalogs or {})
     visual_index = visual_index or VisualIndex(settings.data_dir / "card_index.db")
 
@@ -56,6 +58,8 @@ def create_app(
     recognizer = CardRecognizer(visual_index, number_reader or NumberReader(), get_catalog)
     session_factory = init_db(make_engine(settings))
     service = GradingService(settings, hardware, load_rules(settings.rules_path))
+    with session_factory() as db:
+        service.set_calibration(load_active(db))  # lens correction + white balance from the start
     policy = load_policy(settings.privacy_path)
 
     @asynccontextmanager
@@ -78,6 +82,7 @@ def create_app(
     app.state.session_factory = session_factory
     app.include_router(auth_api.build_router(get_db, settings))
     app.include_router(reports.build_router(get_db, settings))
+    app.include_router(calibration_api.build_router(get_db, settings, service))
 
     def get_session(db: Session, session_id: int) -> GradingSession:
         gs = db.get(GradingSession, session_id)

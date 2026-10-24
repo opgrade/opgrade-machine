@@ -33,6 +33,8 @@ class Settings:
     verify_url: str | None = None
     # Serve /verify/<certificate> from this machine (no login, no client data). Off by default.
     public_verification: bool = False
+    # Simulation only: lens distortion, colour cast and vignetting, to rehearse calibration.
+    sim_optics: bool = False
     database_url: str = field(default="")
 
     def __post_init__(self) -> None:
@@ -58,4 +60,5 @@ class Settings:
             cookie_secure=_env_bool("OPGRADE_COOKIE_SECURE", False),
             verify_url=os.environ.get("OPGRADE_VERIFY_URL") or None,
             public_verification=_env_bool("OPGRADE_PUBLIC_VERIFY", False),
+            sim_optics=_env_bool("OPGRADE_SIM_OPTICS", False),
         )

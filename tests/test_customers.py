@@ -216,3 +216,15 @@ def test_retention_anonymizes_inactive_clients_only(ctx):
     assert api.post("/api/privacy/retention/apply").json() == {"anonymized": 1}
     assert api.get(f"/api/clients/{old['id']}").json()["anonymized_at"]
     assert api.get(f"/api/clients/{recent['id']}").json()["anonymized_at"] is None
+
+
+def test_dates_read_back_are_utc_with_offset(ctx):
+    """SQLite drops time zones: dates must still leave the API as UTC with an offset,
+    otherwise the browser shows them hours off."""
+    api, db = ctx
+    c = create_client(api)
+    with db() as s:
+        created = s.get(Client, c["id"]).created_at
+    assert created.tzinfo is not None
+    created_json = api.get(f"/api/clients/{c['id']}").json()["created_at"]
+    assert created_json.endswith(("Z", "+00:00"))

@@ -58,9 +58,61 @@
       <button data-go="home">Accueil</button>
     </section>
 
+    <!-- Calibration -->
+    <section id="screen-calibration" class="screen" hidden>
+      <h1>Calibration de la caméra</h1>
+      <div id="cal-active" class="card-info"></div>
+
+      <h2>1. Mise au point</h2>
+      <p class="muted">Poser la mire, appuyer plusieurs fois en tournant la bague de l'objectif : viser la valeur maximale, puis bloquer la bague.</p>
+      <button id="cal-focus">Mesurer la netteté</button> <b id="cal-focus-value"></b>
+
+      <h2>2. Mire</h2>
+      <p class="muted">Imprimer à 100 %, mesurer une case au pied à coulisse, coller sur un support rigide et plat.</p>
+      <a href="/api/calibration/board.pdf" target="_blank">Télécharger la mire (PDF)</a>
+      <form id="cal-start-form" class="grid narrow">
+        <label>Taille réelle d'une case (mm) <input name="square_mm" type="number" step="0.01" value="12.00" required></label>
+        <button class="primary" type="submit">Démarrer une calibration</button>
+      </form>
+
+      <div id="cal-run" hidden>
+        <h2>3. Captures de la mire</h2>
+        <p class="muted">D'abord à plat à l'emplacement de la carte, puis déplacée dans tout le champ et inclinée de 10 à 20°.</p>
+        <button id="cal-capture-flat" class="primary">Capturer à plat</button>
+        <button id="cal-capture-view">Capturer une vue inclinée</button>
+        <p id="cal-progress" class="instruction"></p>
+
+        <h2>4. Balance des blancs</h2>
+        <p class="muted">Carte blanche ou grise 18 % couvrant le plateau, éclairage diffus.</p>
+        <button id="cal-white">Mesurer la référence blanche</button>
+        <p id="cal-white-result"></p>
+
+        <h2>5. Calcul</h2>
+        <button id="cal-compute" class="primary huge">Calculer la calibration</button>
+        <div id="cal-result" class="card-info" hidden></div>
+      </div>
+
+      <div id="cal-sim" class="sim" hidden>
+        <b>Simulation</b> — sur le plateau :
+        <button data-target="flat">Mire à plat</button>
+        <button data-target="random">Mire déplacée / inclinée</button>
+        <button data-target="white">Feuille blanche</button>
+        <button data-target="none">Retirer</button>
+      </div>
+
+      <figure class="cal-preview"><img id="cal-preview" alt=""><figcaption class="muted">Dernière image (coins détectés en vert)</figcaption></figure>
+
+      <h2>Historique</h2>
+      <table class="history"><thead><tr><th>#</th><th>Date</th><th>Erreur</th><th>px/mm</th><th></th></tr></thead>
+        <tbody id="cal-history"></tbody></table>
+      <button data-go="admin">Retour à l'administration</button>
+    </section>
+
     <!-- Administration -->
     <section id="screen-admin" class="screen" hidden>
       <h1>Administration</h1>
+
+      <button id="btn-calibration" class="primary">Calibration de la caméra</button>
 
       <h2>Comptes</h2>
       <table class="history"><thead><tr><th>Identifiant</th><th>Rôle</th><th>État</th><th></th></tr></thead>

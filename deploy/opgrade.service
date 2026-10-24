@@ -1,0 +1,25 @@
+# OpGrade X — service systemd (copier dans /etc/systemd/system/opgrade.service)
+[Unit]
+Description=OpGrade X - logiciel de gradation
+After=network.target
+
+[Service]
+Type=simple
+User=opgrade
+Group=opgrade
+# video : accès caméra ; gpio : éclairages
+SupplementaryGroups=video gpio
+WorkingDirectory=/opt/opgrade
+EnvironmentFile=/etc/opgrade.env
+ExecStart=/opt/opgrade/.venv/bin/python -m opgrade
+Restart=on-failure
+RestartSec=3
+# Durcissement : le service n'écrit que dans son dossier de données.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/opgrade
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

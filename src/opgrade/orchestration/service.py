@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,12 +10,14 @@ from pathlib import Path
 import cv2
 from sqlalchemy.orm import Session
 
+from ..calibration.charuco import undistort
+from ..calibration.store import ActiveCalibration
 from ..config import Settings
 from ..customers.orders import refresh_status
-from ..reports.certificates import assign_certificate
 from ..data.models import Capture, Card, CardType, GradingSession, Measurement, Subgrade
 from ..grading import GradingRules, centering_grade, compute_final_grade
 from ..hardware.base import Hardware, LightingMode, Side
+from ..reports.certificates import assign_certificate
 from ..vision import (
     DetectionError,
     assess_quality,
@@ -26,6 +29,7 @@ from ..vision import (
 )
 from .state_machine import CAPTURE_SIDE, INSTRUCTIONS, SessionState, check_transition
 
+log = logging.getLogger(__name__)
 OPERATOR_CRITERIA = ("corners", "edges", "surface")
 
 
@@ -49,6 +53,23 @@ class GradingService:
         self.settings = settings
         self.hardware = hardware
         self.rules = rules
+        self.calibration: ActiveCalibration | None = None
+
+    def set_calibration(self, calibration: ActiveCalibration | None) -> None:
+        """Use this calibration for every following capture (lens correction, white balance)."""
+        self.calibration = calibration
+        if calibration and calibration.colour_gains:
+            self.hardware.camera.set_colour_gains(calibration.colour_gains)
+
+    def _correct_lens(self, image):
+        cal = self.calibration
+        if cal is None:
+            return image
+        if (image.shape[1], image.shape[0]) != cal.image_size:
+            log.warning("Calibration faite en %s, image %s : correction de l'objectif ignorée.",
+                        cal.image_size, (image.shape[1], image.shape[0]))
+            return image
+        return undistort(image, cal.camera_matrix, cal.dist_coeffs)
 
     # -- helpers ---------------------------------------------------------------------------
 
@@ -90,6 +111,10 @@ class GradingService:
             raw = self.hardware.camera.capture()
         finally:
             self.hardware.lighting.off()
+        # Straight edges and true proportions before any measurement (6 mm lens: strong barrel).
+        raw = self._correct_lens(raw)
+        if silhouette is not None:
+            silhouette = self._correct_lens(silhouette)
         w, h = card_type.width_mm, card_type.height_mm
         try:
             if silhouette is not None:
@@ -118,6 +143,7 @@ class GradingService:
             simulated=self.hardware.simulated,
             operator=operator,
             rules_version=self.rules.version,
+            calibration_id=self.calibration.id if self.calibration else None,
             model_version=None,  # no AI model in V1
             last_message=INSTRUCTIONS[SessionState.AWAIT_FRONT],
         )

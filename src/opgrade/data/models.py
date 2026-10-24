@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -15,6 +16,24 @@ def _uuid() -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """Timezone-aware UTC datetimes. SQLite drops the timezone: without this, dates read back are
+    naive, serialised without offset, and shown hours off (local time) in the interface."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class Base(DeclarativeBase):
@@ -31,12 +50,12 @@ class Client(Base):
     email: Mapped[str | None] = mapped_column(String(200))
     phone: Mapped[str | None] = mapped_column(String(50))
     notes: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     # Loi 25: current consent state. The full history is in consent_records.
-    consent_service_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consent_service_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     consent_policy_version: Mapped[str | None] = mapped_column(String(30))
     consent_marketing: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    anonymized_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     cards: Mapped[list["Card"]] = relationship(back_populates="client")
     orders: Mapped[list["Order"]] = relationship(back_populates="client")
@@ -58,7 +77,7 @@ class ConsentRecord(Base):
     method: Mapped[str | None] = mapped_column(String(20))  # touch | paper | verbal | email
     recorded_by: Mapped[str | None] = mapped_column(String(100))
     reason: Mapped[str | None] = mapped_column(Text)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
 
 class Order(Base):
@@ -76,9 +95,9 @@ class Order(Base):
     tracking_in: Mapped[str | None] = mapped_column(String(100))
     tracking_out: Mapped[str | None] = mapped_column(String(100))
     return_address: Mapped[str | None] = mapped_column(Text)  # personal data: cleared on anonymization
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    graded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    graded_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    returned_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     client: Mapped[Client] = relationship(back_populates="orders")
     cards: Mapped[list["Card"]] = relationship(back_populates="order")
@@ -122,7 +141,7 @@ class Card(Base):
     external_id: Mapped[str | None] = mapped_column(String(100))
     reference_image_url: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     client: Mapped[Client] = relationship(back_populates="cards")
     order: Mapped["Order | None"] = relationship(back_populates="cards")
@@ -145,13 +164,14 @@ class GradingSession(Base):
     final_grade: Mapped[int | None] = mapped_column(Integer)
     # Public, random certificate number ("OPG-7KQ2-M9XD"), assigned when grading completes.
     certificate_number: Mapped[str | None] = mapped_column(String(20), unique=True)
+    calibration_id: Mapped[int | None] = mapped_column(ForeignKey("calibrations.id"))
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True)
     explanation: Mapped[list | None] = mapped_column(JSON)
     last_message: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now, onupdate=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     card: Mapped[Card] = relationship(back_populates="sessions")
     captures: Mapped[list["Capture"]] = relationship(back_populates="session", cascade="all, delete-orphan")
@@ -172,7 +192,7 @@ class Capture(Base):
     width_px: Mapped[int] = mapped_column(Integer)
     height_px: Mapped[int] = mapped_column(Integer)
     sharpness: Mapped[float] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     session: Mapped[GradingSession] = relationship(back_populates="captures")
 
@@ -213,9 +233,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20))  # operator | admin
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
 
 class AuthSession(Base):
@@ -226,8 +246,8 @@ class AuthSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     ip: Mapped[str | None] = mapped_column(String(64))
 
     user: Mapped[User] = relationship()
@@ -239,9 +259,35 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
     username: Mapped[str | None] = mapped_column(String(30))
     action: Mapped[str] = mapped_column(String(40))
     target: Mapped[str | None] = mapped_column(String(100))  # e.g. "client:12", "user:3"
     details: Mapped[dict | None] = mapped_column(JSON)
     ip: Mapped[str | None] = mapped_column(String(64))
+
+
+class Calibration(Base):
+    """Camera calibration (lens, tray scale, colour). One is active; every grading records which."""
+
+    __tablename__ = "calibrations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    created_by: Mapped[str | None] = mapped_column(String(30))
+    machine_id: Mapped[str] = mapped_column(String(50))
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    board: Mapped[dict] = mapped_column(JSON)  # BoardSpec, with the MEASURED square size
+    image_width: Mapped[int] = mapped_column(Integer)
+    image_height: Mapped[int] = mapped_column(Integer)
+    camera_matrix: Mapped[list] = mapped_column(JSON)
+    dist_coeffs: Mapped[list] = mapped_column(JSON)
+    rms_px: Mapped[float] = mapped_column(Float)
+    views: Mapped[int] = mapped_column(Integer)
+    px_per_mm: Mapped[float] = mapped_column(Float)
+    scale_variation: Mapped[float] = mapped_column(Float)
+    colour_gains: Mapped[list | None] = mapped_column(JSON)  # B, G, R multipliers
+    uniformity: Mapped[float | None] = mapped_column(Float)
+    warnings: Mapped[list | None] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(Text)

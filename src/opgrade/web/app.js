@@ -43,6 +43,7 @@ function show(name) {
   if (name === "client") searchClients("");
   if (name === "order-detail" && state.order) refreshOrder();
   if (name === "admin") loadAdmin().catch((err) => toast(err.message));
+  if (name === "calibration") loadCalibration().catch((err) => toast(err.message));
 }
 
 // -- Comptes ----------------------------------------------------------------------------
@@ -123,12 +124,114 @@ $("#password-form").addEventListener("submit", async (e) => {
 
 $("#btn-admin").addEventListener("click", () => show("admin"));
 
+// -- Calibration ------------------------------------------------------------------------
+$("#btn-calibration").addEventListener("click", () => show("calibration"));
+
+const pct = (v) => `${(v * 100).toFixed(1)} %`;
+
+function refreshPreview() {
+  $("#cal-preview").src = "/api/calibration/preview.jpg?t=" + Date.now();
+}
+
+function renderRun(run) {
+  $("#cal-run").hidden = !run;
+  if (!run) return;
+  const enough = run.views >= run.min_views;
+  $("#cal-progress").textContent =
+    `${run.flat_done ? "✓ Vue à plat" : "✗ Vue à plat manquante"} · ${run.views} vue(s) ` +
+    `(minimum ${run.min_views}, recommandé ${run.recommended_views}) · ` +
+    `${run.white_done ? "✓ Balance des blancs" : "Balance des blancs facultative"}`;
+  $("#cal-progress").className = "instruction" + (run.flat_done && enough ? " ok" : "");
+  $("#cal-compute").disabled = !(run.flat_done && enough);
+}
+
+function calibrationSummary(c) {
+  const warnings = c.warnings.length ? `<ul class="warn-list">${c.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
+  return `<b>Calibration n° ${c.id}</b> ${c.active ? "(active)" : ""} — ${new Date(c.created_at).toLocaleString("fr-CA")} par ${esc(c.created_by)}<br>
+    Erreur de reprojection : <b>${c.rms_px.toFixed(3)} px</b> sur ${c.views} vues ·
+    échelle : <b>${c.px_per_mm.toFixed(2)} px/mm</b> (variation ${pct(c.scale_variation)})<br>
+    Focale : ${c.focal_px.toFixed(0)} px · distorsion k1 = ${c.dist_coeffs[0].toFixed(3)} ·
+    ${c.uniformity != null ? `uniformité de l'éclairage ${pct(c.uniformity)}` : "pas de balance des blancs"}${warnings}`;
+}
+
+async function loadCalibration() {
+  const [st, history] = await Promise.all([api("GET", "/api/calibration/state"), api("GET", "/api/calibrations")]);
+  $("#cal-active").innerHTML = st.active ? calibrationSummary(st.active)
+    : '<b>Aucune calibration active</b> : les mesures ne sont pas corrigées de la distorsion de l\'objectif.';
+  renderRun(st.run);
+  $("#cal-sim").hidden = !state.status.simulation;
+  $("#cal-history").innerHTML = history.map((c) => `
+    <tr><td>${c.id}</td><td>${new Date(c.created_at).toLocaleString("fr-CA")}</td>
+      <td>${c.rms_px.toFixed(3)} px</td><td>${c.px_per_mm.toFixed(2)}</td>
+      <td>${c.active ? "<b>active</b>" : `<button data-activate="${c.id}">Activer</button>`}</td></tr>`).join("");
+}
+
+$("#cal-focus").addEventListener("click", (e) => busy(e.target, async () => {
+  const r = await api("GET", "/api/calibration/focus");
+  $("#cal-focus-value").textContent = `netteté ${r.sharpness} · ${r.corners} coins de mire vus`;
+  refreshPreview();
+}));
+
+$("#cal-start-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    renderRun(await api("POST", "/api/calibration/start", { square_mm: Number(e.target.square_mm.value) }));
+    $("#cal-result").hidden = true; $("#cal-white-result").textContent = "";
+  } catch (err) { toast(err.message); }
+});
+
+async function captureView(kind, btn) {
+  await busy(btn, async () => {
+    const r = await api("POST", "/api/calibration/capture", { kind });
+    toast(r.message, r.accepted ? "ok" : "error");
+    renderRun(r);
+    refreshPreview();
+  });
+}
+$("#cal-capture-flat").addEventListener("click", (e) => captureView("flat", e.target));
+$("#cal-capture-view").addEventListener("click", (e) => captureView("view", e.target));
+
+$("#cal-white").addEventListener("click", (e) => busy(e.target, async () => {
+  const r = await api("POST", "/api/calibration/white");
+  $("#cal-white-result").innerHTML = `Uniformité de l'éclairage : <b>${pct(r.uniformity)}</b> ·
+    gains B/V/R : ${r.gains_bgr.map((g) => g.toFixed(3)).join(" / ")}` +
+    (r.problems.length ? `<ul class="warn-list">${r.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : "");
+  renderRun(r);
+  refreshPreview();
+}));
+
+$("#cal-compute").addEventListener("click", (e) => busy(e.target, async () => {
+  const c = await api("POST", "/api/calibration/compute");
+  $("#cal-result").innerHTML = calibrationSummary(c) +
+    `<br><button class="primary" data-activate="${c.id}">Activer cette calibration</button>`;
+  $("#cal-result").hidden = false;
+  await loadCalibration();
+}));
+
+document.querySelector("#screen-calibration").addEventListener("click", (e) => {
+  const id = e.target.dataset.activate;
+  if (!id) return;
+  busy(e.target, async () => {
+    await api("POST", `/api/calibrations/${id}/activate`);
+    toast("Calibration activée : elle s'applique aux prochaines captures.", "ok");
+    $("#cal-result").hidden = true;
+    await loadCalibration();
+  });
+});
+
+$("#cal-sim").addEventListener("click", (e) => {
+  const kind = e.target.dataset.target;
+  if (!kind) return;
+  busy(e.target, async () => { await api("POST", "/api/calibration/sim-target", { kind }); });
+});
+
 // -- Administration ---------------------------------------------------------------------
 const AUDIT_LABELS = {
   setup: "Configuration initiale", login: "Connexion", login_failed: "Échec de connexion", logout: "Déconnexion",
   user_created: "Compte créé", user_updated: "Compte modifié", password_reset: "Mot de passe réinitialisé",
   password_changed: "Mot de passe changé", client_export: "Export de données client",
   client_anonymized: "Client anonymisé", retention_applied: "Conservation appliquée", card_type_created: "Type de carte ajouté",
+  calibration_computed: "Calibration calculée", calibration_activated: "Calibration activée",
 };
 
 async function loadAdmin() {

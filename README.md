@@ -30,6 +30,8 @@ une nouvelle avec un centrage aléatoire. Les analyses simulées sont marquées 
 
 ## Sur le Raspberry Pi (non encore validé sur matériel)
 
+Procédure complète : [docs/RASPBERRY_PI.md](docs/RASPBERRY_PI.md). En bref :
+
 ```bash
 sudo apt install python3-picamera2 python3-gpiozero
 python3 -m venv --system-site-packages .venv

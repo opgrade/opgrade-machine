@@ -212,6 +212,7 @@ class SessionOut(ORM):
     model_version: str | None
     final_grade: int | None
     certificate_number: str | None
+    calibration_id: int | None = None
     confidence: float | None
     needs_review: bool
     explanation: list | None

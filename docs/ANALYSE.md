@@ -573,3 +573,44 @@ machine n'a pas vocation à être exposée sur Internet.
 Limites : polices PDF standard (alphabet latin ; un nom en japonais s'affiche avec « ? ») ; pas
 encore de section « défauts détectés » (V2, quand l'IA les localisera) ; pas de signature
 numérique du PDF (à étudier contre la contrefaçon, avec les étiquettes de boîtier).
+
+---
+
+## 19. Capture réelle (Raspberry Pi) et calibration ChArUco
+
+Mise en service pas à pas : **[docs/RASPBERRY_PI.md](RASPBERRY_PI.md)** (système, caméra, service
+`systemd`, écran en kiosque, vérification du matériel, calibration, premiers tests).
+
+### Pilote caméra (`hardware/pi.py`)
+
+- Format `RGB888` de picamera2, qui correspond au **BGR d'OpenCV**. L'ancien code utilisait
+  `BGR888` et aurait **inversé rouge et bleu** sur toutes les photos.
+- Exposition et gain **fixes** (`OPGRADE_CAMERA_EXPOSURE_US`, `OPGRADE_CAMERA_GAIN`), balance
+  des blancs automatique **coupée** : deux captures de la même carte sont comparables.
+- Images en vol **jetées** après chaque changement d'éclairage (la capteur filme en continu) :
+  sans cela, la photo « silhouette » pourrait être exposée en partie sous l'éclairage précédent.
+- Balance des blancs appliquée depuis la calibration active (gains rouge/bleu).
+- `python -m opgrade.hardware.check` : caméra détectée, une photo par éclairage, luminosité,
+  saturation, netteté.
+
+### Calibration (Administration → Calibration de la caméra)
+
+| Étape | Mesure | Critère |
+|---|---|---|
+| Mise au point | netteté au centre (variance du laplacien) | maximum en tournant la bague |
+| Mire imprimée | case **mesurée** au pied à coulisse (saisie) | barre de contrôle 50 mm |
+| Vue à plat | échelle sur le plateau (px/mm), inclinaison caméra/plateau | variation < 1 % |
+| ≥ 10 vues (15 recommandées) | focale, centre optique, distorsion (modèle OpenCV) | reprojection < 0,5 px |
+| Référence blanche | gains de couleur, uniformité de l'éclairage | uniformité ≥ 85 % |
+
+La calibration **active** corrige la distorsion de chaque capture avant la détection de la carte,
+est rechargée au démarrage, et son numéro est enregistré dans chaque gradation et imprimé sur le
+rapport.
+
+**Pourquoi c'est indispensable avec l'objectif 6 mm** (simulation, distorsion k1 = −0,6) :
+sans correction, une carte au centre du champ mesure **86,4 mm au lieu de 88** et son centrage
+haut/bas est décalé de **0,8 point** ; avec la calibration : 88,0 mm et 0,0 point d'écart.
+
+Validé **en simulation seulement** (objectif, mire en 3D, dominante de couleur, vignettage
+simulés ; `OPGRADE_SIM_OPTICS=1`) : focale retrouvée à 0,1 %, k1 à 0,01, échelle 10,00 px/mm,
+inclinaison de 8° détectée. À refaire sur la machine réelle.

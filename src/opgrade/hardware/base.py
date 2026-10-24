@@ -36,6 +36,14 @@ class Camera(ABC):
     def capture(self) -> np.ndarray:
         """Return a full-resolution BGR uint8 image."""
 
+    @property
+    def colour_gains(self) -> tuple[float, float, float]:
+        """Current absolute white balance gains (B, G, R)."""
+        return (1.0, 1.0, 1.0)
+
+    def set_colour_gains(self, gains_bgr: tuple[float, float, float]) -> None:
+        """Apply absolute white balance gains (B, G, R) from the calibration (no-op if unsupported)."""
+
     def close(self) -> None:  # pragma: no cover - default no-op
         pass
 

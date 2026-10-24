@@ -1,0 +1,6 @@
+# Écran tactile en mode kiosque (Raspberry Pi OS Bookworm, bureau labwc).
+# Copier dans ~/.config/labwc/autostart de l'utilisateur de la session graphique.
+# Attend que le service réponde, puis ouvre l'interface en plein écran.
+sh -c 'until curl -sf http://127.0.0.1:8000/api/status >/dev/null; do sleep 1; done; \
+  chromium-browser --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
+  --overscroll-history-navigation=0 --password-store=basic http://127.0.0.1:8000/' &

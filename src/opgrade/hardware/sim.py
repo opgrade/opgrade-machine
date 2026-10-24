@@ -45,12 +45,19 @@ class SimTable:
 
     card: SimCardSpec | None = field(default_factory=SimCardSpec)
     side_up: Side = Side.FRONT
+    # Calibration target lying on the tray instead of a card (ChArUco board or white sheet).
+    target: SimBoardPose | SimWhiteSheet | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def place(self, card: SimCardSpec | None = None, side_up: Side = Side.FRONT) -> None:
         with self.lock:
             self.card = card or SimCardSpec()
             self.side_up = side_up
+            self.target = None
+
+    def place_target(self, target: SimBoardPose | SimWhiteSheet | None) -> None:
+        with self.lock:
+            self.target = target
 
     def flip(self) -> None:
         with self.lock:
@@ -62,8 +69,10 @@ class SimTable:
 
 
 class SimulatedLighting(Lighting):
-    def __init__(self) -> None:
+    def __init__(self, tint_bgr: tuple[float, float, float] = (1.0, 1.0, 1.0), vignetting: float = 0.0) -> None:
         self._mode = LightingMode.OFF
+        self.tint_bgr = tint_bgr  # LED colour cast
+        self.vignetting = vignetting  # brightness loss at the field corners (0.2 = -20 %)
 
     def set_mode(self, mode: LightingMode) -> None:
         self._mode = mode
@@ -141,17 +150,133 @@ def render_scene(spec: SimCardSpec | None, side: Side, lighting: LightingMode) -
 
 
 class SimulatedCamera(Camera):
-    def __init__(self, table: SimTable, lighting: SimulatedLighting) -> None:
+    def __init__(self, table: SimTable, lighting: SimulatedLighting, lens: SimLens | None = None) -> None:
         self.table = table
         self.lighting = lighting
+        self.lens = lens
+        self.colour_gains_bgr = (1.0, 1.0, 1.0)
+
+    @property
+    def colour_gains(self) -> tuple[float, float, float]:
+        return self.colour_gains_bgr
+
+    def set_colour_gains(self, gains_bgr: tuple[float, float, float]) -> None:
+        self.colour_gains_bgr = tuple(gains_bgr)
 
     def capture(self) -> np.ndarray:
         with self.table.lock:
-            spec, side = self.table.card, self.table.side_up
-        return render_scene(spec, side, self.lighting.mode)
+            spec, side, target = self.table.card, self.table.side_up, self.table.target
+        mode = self.lighting.mode
+        if isinstance(target, SimBoardPose):
+            frame = render_board(target, mode)
+        elif isinstance(target, SimWhiteSheet):
+            frame = render_white_sheet(target, mode)
+        else:
+            frame = render_scene(spec, side, mode)
+        if mode not in (LightingMode.OFF, LightingMode.BACKLIGHT):
+            frame = _apply_light(frame, self.lighting, self.colour_gains_bgr)
+        if self.lens is not None:
+            frame = self.lens.distort(frame)
+        return frame
 
 
-def build_simulated_hardware(table: SimTable | None = None) -> Hardware:
-    lighting = SimulatedLighting()
-    camera = SimulatedCamera(table or SimTable(), lighting)
+def _apply_light(frame: np.ndarray, lighting: SimulatedLighting, gains: tuple[float, float, float]) -> np.ndarray:
+    factor = np.array(lighting.tint_bgr, np.float32) * np.array(gains, np.float32)
+    if np.allclose(factor, 1.0) and lighting.vignetting == 0:
+        return frame
+    out = frame.astype(np.float32) * factor
+    if lighting.vignetting:
+        yy, xx = np.mgrid[0:CANVAS_H, 0:CANVAS_W].astype(np.float32)
+        r2 = ((xx - CANVAS_W / 2) ** 2 + (yy - CANVAS_H / 2) ** 2) / ((CANVAS_W / 2) ** 2 + (CANVAS_H / 2) ** 2)
+        out *= (1 - lighting.vignetting * r2)[..., None]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+# -- optics: the canvas is the ideal pinhole image of the tray seen from SIM_DISTANCE_MM -----
+
+SIM_DISTANCE_MM = 250.0
+SIM_FOCAL_PX = SIM_PX_PER_MM * SIM_DISTANCE_MM  # gives 10 px/mm on the tray plane
+
+
+def sim_camera_matrix() -> np.ndarray:
+    return np.array([[SIM_FOCAL_PX, 0, CANVAS_W / 2], [0, SIM_FOCAL_PX, CANVAS_H / 2], [0, 0, 1]], np.float64)
+
+
+@dataclass
+class SimLens:
+    """OpenCV distortion model applied to the ideal image. A short focal lens such as the 6 mm
+    CS lens shows strong barrel distortion (k1 < 0)."""
+
+    dist: tuple[float, float, float, float, float] = (-0.6, 0.2, 0.0, 0.0, 0.0)
+    _maps: tuple | None = field(default=None, repr=False)
+
+    def distort(self, ideal: np.ndarray) -> np.ndarray:
+        if self._maps is None:
+            k = sim_camera_matrix()
+            yy, xx = np.mgrid[0:CANVAS_H, 0:CANVAS_W].astype(np.float32)
+            pts = np.stack([xx.ravel(), yy.ravel()], axis=1).reshape(-1, 1, 2)
+            # For each pixel of the distorted output: where it comes from in the ideal image.
+            src = cv2.undistortPoints(pts, k, np.array(self.dist), P=k).reshape(CANVAS_H, CANVAS_W, 2)
+            self._maps = (src[..., 0].astype(np.float32), src[..., 1].astype(np.float32))
+        # Replicate edges: a real lens just sees a bit more of the tray, it adds no black frame.
+        return cv2.remap(ideal, self._maps[0], self._maps[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
+@dataclass
+class SimBoardPose:
+    """A printed ChArUco board on the tray: centre offset (mm) and tilt (degrees)."""
+
+    spec: object  # calibration.BoardSpec (kept untyped so the HAL does not depend on it)
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    tilt_x_deg: float = 0.0
+    tilt_y_deg: float = 0.0
+    rotation_deg: float = 0.0
+
+
+@dataclass
+class SimWhiteSheet:
+    """White reference card covering the field, for white balance and uniformity."""
+
+    level: float = 225.0
+
+
+PAPER_MARGIN_MM = 8.0
+BOARD_RASTER_PX_PER_MM = 12.0
+
+
+def render_board(pose: SimBoardPose, lighting: LightingMode) -> np.ndarray:
+    spec = pose.spec
+    bw, bh = spec.squares_x * spec.square_mm, spec.squares_y * spec.square_mm
+    pw, ph = bw + 2 * PAPER_MARGIN_MM, bh + 2 * PAPER_MARGIN_MM
+    s = BOARD_RASTER_PX_PER_MM
+    paper = np.full((int(ph * s), int(pw * s)), 245, np.uint8)
+    board = spec.board().generateImage((int(bw * s), int(bh * s)), marginSize=0)
+    m = int(PAPER_MARGIN_MM * s)
+    paper[m : m + board.shape[0], m : m + board.shape[1]] = board
+
+    # Paper point (u, v, 0) mm -> camera: X = R @ ((u, v, 0) - centre) + t, i.e. K [r1 r2 t'].
+    rot = cv2.Rodrigues(np.radians([pose.tilt_x_deg, pose.tilt_y_deg, pose.rotation_deg]))[0]
+    t = np.array([pose.x_mm, pose.y_mm, SIM_DISTANCE_MM])
+    t_prime = t - rot @ np.array([pw / 2, ph / 2, 0.0])
+    homography = sim_camera_matrix() @ np.column_stack([rot[:, 0], rot[:, 1], t_prime]) @ np.diag([1 / s, 1 / s, 1])
+    canvas = np.full((CANVAS_H, CANVAS_W), 14, np.uint8)
+    warped = cv2.warpPerspective(paper, homography, (CANVAS_W, CANVAS_H), flags=cv2.INTER_AREA)
+    mask = cv2.warpPerspective(np.full(paper.shape, 255, np.uint8), homography, (CANVAS_W, CANVAS_H))
+    canvas[mask > 127] = warped[mask > 127]
+    if lighting == LightingMode.OFF:
+        canvas = (canvas * 0.05).astype(np.uint8)
+    return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
+
+
+def render_white_sheet(sheet: SimWhiteSheet, lighting: LightingMode) -> np.ndarray:
+    rng = np.random.default_rng(3)
+    frame = np.clip(rng.normal(sheet.level, 2, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
+    return (frame * 0.05).astype(np.uint8) if lighting == LightingMode.OFF else frame
+
+
+def build_simulated_hardware(table: SimTable | None = None, lens: SimLens | None = None,
+                             lighting: SimulatedLighting | None = None) -> Hardware:
+    lighting = lighting or SimulatedLighting()
+    camera = SimulatedCamera(table or SimTable(), lighting, lens)
     return Hardware(camera=camera, lighting=lighting, simulated=True, has_backlight=True)

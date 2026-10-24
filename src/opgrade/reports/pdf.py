@@ -235,6 +235,7 @@ def build_report(session: GradingSession, data_dir: Path, verify_url: str | None
         ("Opérateur / Operator", session.operator or "-"),
         ("Règles / Rules", session.rules_version),
         ("Modèle IA / AI model", session.model_version or "aucun (V1)"),
+        ("Calibration", f"n° {session.calibration_id}" if session.calibration_id else "aucune (non calibrée)"),
         ("Commande / Order", order),
         ("Validation", "sous-notes validées par l'opérateur" if not session.needs_review else "à réviser"),
         ("Logiciel / Software", f"OpGrade X {__version__}"),

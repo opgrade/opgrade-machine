@@ -30,6 +30,8 @@ uv pip install --python .venv -e ".[dev]"
 .venv/Scripts/python scripts/eval_visual.py --catalog tcgdex --index-size 30000 --ocr --ambiguous-only  # OCR sur réimpressions
 ```
 
+Mise en service sur le Pi : [docs/RASPBERRY_PI.md](docs/RASPBERRY_PI.md) (fichiers dans `deploy/`).
+
 Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 `OPGRADE_DATA_DIR`, `OPGRADE_MACHINE_ID`, `OPGRADE_HOST`, `OPGRADE_PORT`.
 
@@ -37,13 +39,14 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 
 | Module | Rôle |
 |---|---|
-| `hardware/` | HAL : interfaces `Camera`, `Lighting` (`base.py`) ; `sim.py` (simulateur) ; `pi.py` (picamera2/GPIO) |
+| `hardware/` | HAL : interfaces `Camera`, `Lighting` (`base.py`) ; `sim.py` (simulateur, optique réaliste avec `OPGRADE_SIM_OPTICS=1`) ; `pi.py` (picamera2/GPIO) ; `check.py` (vérification du matériel) |
 | `orchestration/` | Machine à états d'une session de gradation (`state_machine.py`) et service qui l'exécute (`service.py`) |
 | `vision/` | Détection/redressement de la carte, contrôle qualité image, centrage, détection de retournement |
 | `grading/` | Règles versionnées (`src/opgrade/rules/grading_rules.yaml`) et moteur de calcul de la note |
 | `identify/` | Identification : recherche texte en ligne (`catalogs.py` : TCGdex, Scryfall, YGOPRODeck, Pokémon TCG API) et **reconnaissance par image** hors ligne (`visual.py` : empreintes pHash + index `data/card_index.db` ; `build_index.py` le construit depuis `sources.py`), **numéro imprimé lu par OCR** (`ocr.py`, RapidOCR) pour départager les réimpressions ; `recognize.py` enchaîne les deux. Catalogue choisi par `CardType.catalog`. Les cartes Pokémon TCG Pocket (numériques) sont exclues |
 | `auth/` | Comptes et rôles (operator, admin) : scrypt, sessions, verrouillage, journal `audit_events` ; CLI `python -m opgrade.auth` |
 | `reports/` | Rapport PDF une page (ReportLab, FR/EN, QR code) et n° de certificat aléatoire ; page publique `/verify/…` optionnelle (`OPGRADE_PUBLIC_VERIFY`) |
+| `calibration/` | ChArUco (`charuco.py` : mire, détection, intrinsèques, échelle du plateau), couleur (`color.py`), stockage/activation (`store.py`). La calibration active corrige chaque capture |
 | `customers/` | Commandes/lots (`orders.py` : statuts reçue → en cours → gradée → retournée) et Loi 25 (`privacy.py` : consentement versionné, export, anonymisation, conservation ; avis dans `rules/privacy.yaml`) |
 | `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes), mini-migration (ajout de colonnes) |
 | `api/` | Application FastAPI et routes |
@@ -104,3 +107,9 @@ vraies API ; revérifier en direct quand on touche un adaptateur.
 
 À faire ensuite (voir docs/ANALYSE.md §9) : capture réelle picamera2 + calibration ChArUco,
 utilisateurs/rôles + journal d'audit, rapport PDF + QR, multi-éclairage, administration.
+
+## Pièges connus
+
+- picamera2 : le format `RGB888` donne un tableau **BGR** (celui d'OpenCV) ; `BGR888` inverse rouge et bleu.
+- SQLite perd le fuseau horaire : toujours `UTCDateTime()` (data/models.py) pour une date en base.
+- OpenCV 5 renvoie les coins ChArUco en `(N, 2)` : `calibration.detect` normalise en `(N, 1, 2)`.

@@ -64,5 +64,8 @@ body.role-operator .admin-only, body.role-admin .operator-only { display: none !
 .certificate { text-align: center; font-weight: 700; letter-spacing: .08em; font-size: 1.2rem; }
 #btn-report { width: 100%; margin: 6px 0 12px; }
 a { color: var(--accent); }
+.cal-preview { margin: 16px 0; } .cal-preview img { max-width: 100%; max-height: 420px; border-radius: 8px; }
+.cal-preview img:not([src]) { display: none; }
+.warn-list { color: var(--warn); }
 .toast.ok { background: var(--ok); color: #111; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--danger); padding: 14px 22px; border-radius: 10px; max-width: 90%; }
