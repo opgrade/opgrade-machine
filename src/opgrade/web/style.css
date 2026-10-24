@@ -61,5 +61,8 @@ label.check input { width: 28px; height: 28px; min-height: 0; flex: none; accent
 .user-pill { background: #2a3a2f; }
 .grid.narrow { max-width: 480px; }
 body.role-operator .admin-only, body.role-admin .operator-only { display: none !important; }
+.certificate { text-align: center; font-weight: 700; letter-spacing: .08em; font-size: 1.2rem; }
+#btn-report { width: 100%; margin: 6px 0 12px; }
+a { color: var(--accent); }
 .toast.ok { background: var(--ok); color: #111; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--danger); padding: 14px 22px; border-radius: 10px; max-width: 90%; }

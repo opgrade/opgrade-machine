@@ -211,6 +211,7 @@ class SessionOut(ORM):
     rules_version: str
     model_version: str | None
     final_grade: int | None
+    certificate_number: str | None
     confidence: float | None
     needs_review: bool
     explanation: list | None

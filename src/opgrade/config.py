@@ -28,6 +28,11 @@ class Settings:
     rules_path: Path = DEFAULT_RULES_PATH
     privacy_path: Path = DEFAULT_PRIVACY_PATH
     cookie_secure: bool = False  # True when served over HTTPS
+    # Base URL of the public certificate verification page, printed as a QR code on reports,
+    # e.g. "https://verifier.opgrade.ca". None: the QR code carries the certificate number only.
+    verify_url: str | None = None
+    # Serve /verify/<certificate> from this machine (no login, no client data). Off by default.
+    public_verification: bool = False
     database_url: str = field(default="")
 
     def __post_init__(self) -> None:
@@ -51,4 +56,6 @@ class Settings:
             privacy_path=Path(os.environ.get("OPGRADE_PRIVACY_PATH", str(DEFAULT_PRIVACY_PATH))),
             database_url=os.environ.get("OPGRADE_DATABASE_URL", ""),
             cookie_secure=_env_bool("OPGRADE_COOKIE_SECURE", False),
+            verify_url=os.environ.get("OPGRADE_VERIFY_URL") or None,
+            public_verification=_env_bool("OPGRADE_PUBLIC_VERIFY", False),
         )

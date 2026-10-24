@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..customers.orders import refresh_status
+from ..reports.certificates import assign_certificate
 from ..data.models import Capture, Card, CardType, GradingSession, Measurement, Subgrade
 from ..grading import GradingRules, centering_grade, compute_final_grade
 from ..hardware.base import Hardware, LightingMode, Side
@@ -237,6 +238,7 @@ class GradingService:
         if operator:
             gs.operator = operator
         gs.completed_at = datetime.now(timezone.utc)
+        assign_certificate(db, gs)
         self._move(gs, SessionState.COMPLETED, f"Note finale : {final.grade}/10. {INSTRUCTIONS[SessionState.COMPLETED]}")
         refresh_status(gs.card.order)
         db.commit()

@@ -143,6 +143,8 @@ class GradingSession(Base):
     rules_version: Mapped[str] = mapped_column(String(50))
     model_version: Mapped[str | None] = mapped_column(String(50))
     final_grade: Mapped[int | None] = mapped_column(Integer)
+    # Public, random certificate number ("OPG-7KQ2-M9XD"), assigned when grading completes.
+    certificate_number: Mapped[str | None] = mapped_column(String(20), unique=True)
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True)
     explanation: Mapped[list | None] = mapped_column(JSON)

@@ -377,7 +377,8 @@ function renderOrder() {
   $("#order-cards").innerHTML = o.cards.length ? o.cards.map((c) => `
     <tr><td>${esc(c.name)}${c.set_name ? ` <span class="muted">${esc(c.set_name)} ${esc(c.card_number)}</span>` : ""}</td>
       <td>${c.session_state ? STATE_LABELS[c.session_state] : "À grader"}</td>
-      <td>${c.final_grade ?? "—"}</td>
+      <td>${c.final_grade ?? "—"}${c.session_state === "completed"
+        ? ` <a href="/api/sessions/${c.session_id}/report.pdf" target="_blank">PDF</a>` : ""}</td>
       <td>${open ? `<button data-card="${c.id}" data-session="${c.session_id ?? ""}" data-state="${c.session_state ?? ""}">
         ${c.session_state === "completed" ? "Voir" : c.session_state && c.session_state !== "cancelled" ? "Continuer" : "Grader"}</button>` : ""}</td></tr>`).join("")
     : '<tr><td colspan="4" class="muted">Aucune carte pour l\'instant.</td></tr>';
@@ -622,10 +623,18 @@ function renderResult() {
     `<tr><td>${CRITERIA_LABELS[g.criterion] || g.criterion}</td><td>${g.value}</td>
      <td class="muted">${g.source === "auto" ? "mesure machine" : "opérateur"}</td></tr>`).join("");
   $("#explanation").innerHTML = (s.explanation || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  const done = s.state === "completed";
+  $("#certificate").hidden = $("#btn-report").hidden = !done;
+  // Gradings finished before certificates existed get their number with their first report.
+  if (done) $("#certificate").textContent = s.certificate_number ? "Certificat n° " + s.certificate_number : "";
   $("#result-order-actions").hidden = !state.order;
   $("#btn-result-home").hidden = !!state.order;
   show("result");
 }
+
+$("#btn-report").addEventListener("click", () => {
+  window.open(`/api/sessions/${state.session.id}/report.pdf`, "_blank");
+});
 
 $("#btn-next-card").addEventListener("click", async () => {
   await refreshOrder();

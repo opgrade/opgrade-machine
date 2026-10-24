@@ -43,6 +43,7 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 | `grading/` | Règles versionnées (`src/opgrade/rules/grading_rules.yaml`) et moteur de calcul de la note |
 | `identify/` | Identification : recherche texte en ligne (`catalogs.py` : TCGdex, Scryfall, YGOPRODeck, Pokémon TCG API) et **reconnaissance par image** hors ligne (`visual.py` : empreintes pHash + index `data/card_index.db` ; `build_index.py` le construit depuis `sources.py`), **numéro imprimé lu par OCR** (`ocr.py`, RapidOCR) pour départager les réimpressions ; `recognize.py` enchaîne les deux. Catalogue choisi par `CardType.catalog`. Les cartes Pokémon TCG Pocket (numériques) sont exclues |
 | `auth/` | Comptes et rôles (operator, admin) : scrypt, sessions, verrouillage, journal `audit_events` ; CLI `python -m opgrade.auth` |
+| `reports/` | Rapport PDF une page (ReportLab, FR/EN, QR code) et n° de certificat aléatoire ; page publique `/verify/…` optionnelle (`OPGRADE_PUBLIC_VERIFY`) |
 | `customers/` | Commandes/lots (`orders.py` : statuts reçue → en cours → gradée → retournée) et Loi 25 (`privacy.py` : consentement versionné, export, anonymisation, conservation ; avis dans `rules/privacy.yaml`) |
 | `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes), mini-migration (ajout de colonnes) |
 | `api/` | Application FastAPI et routes |

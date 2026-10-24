@@ -545,3 +545,31 @@ protégée par défaut. Les actions sensibles ajoutent la vérification du rôle
 **Limites / suite** : pas de HTTPS par défaut (à activer si l'interface est ouverte sur le réseau,
 p. ex. via un proxy) ; pas d'authentification à deux facteurs ; durée de conservation du journal
 de sécurité à définir.
+
+---
+
+## 18. Rapport PDF et certificat
+
+Une page (format Lettre), libellés FR / EN, générée à la demande pour toute gradation terminée
+(`GET /api/sessions/{id}/report.pdf`, connexion requise) :
+
+- **N° de certificat** aléatoire `OPG-XXXX-XXXX` (8 caractères sans 0/O/1/I/L : ~8,5 × 10¹¹
+  valeurs, non séquentiel donc non énumérable), attribué à la fin de la gradation ;
+- **QR code** : URL de vérification `{OPGRADE_VERIFY_URL}/verify/{certificat}` si configurée,
+  sinon le numéro seul ; vérifié par un test qui relit le QR avec OpenCV ;
+- carte (nom, série, numéro, année, rareté, langue), **note finale** et descripteur
+  (GEM MINT … POOR), **sous-notes** avec leur origine (mesure machine / opérateur) ;
+- photos recto/verso redressées avec **les bordures mesurées tracées en vert**, centrage
+  (ratios et mm), confiance, explication du calcul ;
+- traçabilité : date, machine, opérateur, version des règles, modèle IA, n° de commande,
+  validation, version du logiciel, identifiant d'analyse ; mention « note propre à OpGrade » ;
+- filigrane **SIMULATION — NON VALIDE** pour une analyse simulée ;
+- **aucun renseignement personnel du client** (le certificat suit la carte, pas le client).
+
+Page publique de vérification `/verify/{certificat}` (carte et note seulement), **désactivée par
+défaut** (`OPGRADE_PUBLIC_VERIFY=1`). À terme elle relève de la plateforme centrale (V2) : la
+machine n'a pas vocation à être exposée sur Internet.
+
+Limites : polices PDF standard (alphabet latin ; un nom en japonais s'affiche avec « ? ») ; pas
+encore de section « défauts détectés » (V2, quand l'IA les localisera) ; pas de signature
+numérique du PDF (à étudier contre la contrefaçon, avec les étiquettes de boîtier).
