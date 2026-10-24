@@ -1,0 +1,192 @@
+"""FastAPI application: operator API, simulation API and the touch UI."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .. import __version__
+from ..config import PACKAGE_DIR, Settings
+from ..data import Capture, Card, CardType, Client, GradingSession, init_db, make_engine
+from ..grading import load_rules
+from ..hardware import Hardware, Side, build_hardware
+from ..hardware.sim import SimCardSpec, SimulatedCamera
+from ..orchestration import GradingService, InvalidTransition, WorkflowError
+from . import schemas
+
+
+def create_app(settings: Settings | None = None, hardware: Hardware | None = None) -> FastAPI:
+    settings = settings or Settings.from_env()
+    hardware = hardware or build_hardware(settings.simulation)
+    session_factory = init_db(make_engine(settings))
+    service = GradingService(settings, hardware, load_rules(settings.rules_path))
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        hardware.close()
+
+    app = FastAPI(title="OpGrade X", version=__version__, lifespan=lifespan)
+    app.state.settings = settings
+    app.state.hardware = hardware
+    app.state.service = service
+
+    def get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    def get_session(db: Session, session_id: int) -> GradingSession:
+        gs = db.get(GradingSession, session_id)
+        if gs is None:
+            raise HTTPException(404, "Session introuvable.")
+        return gs
+
+    @app.exception_handler(WorkflowError)
+    @app.exception_handler(InvalidTransition)
+    async def _conflict(_: Request, exc: Exception):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    # -- status ---------------------------------------------------------------------------
+
+    @app.get("/api/status")
+    def status() -> dict:
+        return {
+            "version": __version__,
+            "machine_id": settings.machine_id,
+            "simulation": hardware.simulated,
+            "rules_version": service.rules.version,
+        }
+
+    # -- clients / card types / cards -----------------------------------------------------
+
+    @app.get("/api/clients", response_model=list[schemas.ClientOut])
+    def list_clients(q: str | None = None, db: Session = Depends(get_db)):
+        stmt = select(Client).order_by(Client.last_name, Client.first_name)
+        if q:
+            like = f"%{q}%"
+            stmt = stmt.where(Client.first_name.ilike(like) | Client.last_name.ilike(like) | Client.email.ilike(like))
+        return db.scalars(stmt).all()
+
+    @app.post("/api/clients", response_model=schemas.ClientOut, status_code=201)
+    def create_client(body: schemas.ClientIn, db: Session = Depends(get_db)):
+        client = Client(**body.model_dump())
+        db.add(client)
+        db.commit()
+        return client
+
+    @app.get("/api/card-types", response_model=list[schemas.CardTypeOut])
+    def list_card_types(db: Session = Depends(get_db)):
+        return db.scalars(select(CardType).where(CardType.active).order_by(CardType.id)).all()
+
+    @app.post("/api/card-types", response_model=schemas.CardTypeOut, status_code=201)
+    def create_card_type(body: schemas.CardTypeIn, db: Session = Depends(get_db)):
+        # TODO(V1.x): restrict to admin role once authentication exists.
+        if db.scalar(select(CardType).where(CardType.code == body.code)):
+            raise HTTPException(409, "Ce code de type de carte existe déjà.")
+        ct = CardType(**body.model_dump())
+        db.add(ct)
+        db.commit()
+        return ct
+
+    @app.post("/api/cards", response_model=schemas.CardOut, status_code=201)
+    def create_card(body: schemas.CardIn, db: Session = Depends(get_db)):
+        if db.get(Client, body.client_id) is None:
+            raise HTTPException(404, "Client introuvable.")
+        if db.get(CardType, body.card_type_id) is None:
+            raise HTTPException(404, "Type de carte introuvable.")
+        card = Card(**body.model_dump())
+        db.add(card)
+        db.commit()
+        return card
+
+    # -- grading sessions -----------------------------------------------------------------
+
+    @app.get("/api/sessions", response_model=list[schemas.SessionOut])
+    def list_sessions(limit: int = 50, db: Session = Depends(get_db)):
+        stmt = select(GradingSession).order_by(GradingSession.id.desc()).limit(min(limit, 500))
+        return db.scalars(stmt).all()
+
+    @app.post("/api/sessions", response_model=schemas.SessionOut, status_code=201)
+    def start_session(body: schemas.SessionIn, db: Session = Depends(get_db)):
+        return service.start_session(db, body.card_id, body.operator)
+
+    @app.get("/api/sessions/{session_id}", response_model=schemas.SessionOut)
+    def get_session_route(session_id: int, db: Session = Depends(get_db)):
+        return get_session(db, session_id)
+
+    @app.post("/api/sessions/{session_id}/capture", response_model=schemas.CaptureResult)
+    def capture(session_id: int, db: Session = Depends(get_db)):
+        get_session(db, session_id)
+        outcome = service.capture(db, session_id)
+        gs = get_session(db, session_id)
+        return {"accepted": outcome.accepted, "message": outcome.message, "session": gs}
+
+    @app.post("/api/sessions/{session_id}/analyze", response_model=schemas.SessionOut)
+    def analyze(session_id: int, db: Session = Depends(get_db)):
+        get_session(db, session_id)
+        return service.analyze(db, session_id)
+
+    @app.post("/api/sessions/{session_id}/review", response_model=schemas.SessionOut)
+    def review(session_id: int, body: schemas.ReviewIn, db: Session = Depends(get_db)):
+        get_session(db, session_id)
+        grades = {"corners": body.corners, "edges": body.edges, "surface": body.surface}
+        return service.submit_review(db, session_id, grades, body.centering_override, body.operator)
+
+    @app.post("/api/sessions/{session_id}/cancel", response_model=schemas.SessionOut)
+    def cancel(session_id: int, db: Session = Depends(get_db)):
+        get_session(db, session_id)
+        return service.cancel(db, session_id)
+
+    @app.get("/api/captures/{capture_id}/image")
+    def capture_image(capture_id: int, kind: str = "warped", db: Session = Depends(get_db)):
+        cap = db.get(Capture, capture_id)
+        if cap is None:
+            raise HTTPException(404, "Capture introuvable.")
+        rel = cap.raw_path if kind == "raw" else cap.warped_path
+        path = (settings.data_dir / rel).resolve()
+        if not path.is_relative_to(settings.data_dir.resolve()) or not path.exists():
+            raise HTTPException(404, "Image introuvable.")
+        return FileResponse(path, media_type="image/png")
+
+    # -- simulation -----------------------------------------------------------------------
+
+    if hardware.simulated and isinstance(hardware.camera, SimulatedCamera):
+        table = hardware.camera.table
+
+        @app.get("/api/sim/table")
+        def sim_table() -> dict:
+            return {"card_present": table.card is not None, "side_up": table.side_up.value}
+
+        @app.post("/api/sim/place")
+        def sim_place(body: schemas.SimCardIn | None = None) -> dict:
+            spec = SimCardSpec(**body.model_dump()) if body else SimCardSpec()
+            table.place(spec, Side.FRONT)
+            return sim_table()
+
+        @app.post("/api/sim/flip")
+        def sim_flip() -> dict:
+            table.flip()
+            return sim_table()
+
+        @app.post("/api/sim/remove")
+        def sim_remove() -> dict:
+            table.remove()
+            return sim_table()
+
+    # -- web UI ---------------------------------------------------------------------------
+
+    web_dir = Path(PACKAGE_DIR) / "web"
+    app.mount("/ui", StaticFiles(directory=web_dir, html=True), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    def root():
+        return RedirectResponse("/ui/")
+
+    return app

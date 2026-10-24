@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpGrade X</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">OpGrade <b>X</b></div>
+    <div id="machine-status" class="pill">…</div>
+  </header>
+
+  <main>
+    <!-- Accueil -->
+    <section id="screen-home" class="screen">
+      <button class="primary huge" data-go="client">Nouvelle gradation</button>
+      <h2>Dernières analyses</h2>
+      <table class="history"><thead><tr><th>#</th><th>Carte</th><th>État</th><th>Note</th><th></th></tr></thead>
+        <tbody id="history"></tbody></table>
+    </section>
+
+    <!-- Client -->
+    <section id="screen-client" class="screen" hidden>
+      <h1>1. Client</h1>
+      <input id="client-search" placeholder="Rechercher un client (nom, courriel)…">
+      <ul id="client-list" class="choices"></ul>
+      <details>
+        <summary>Nouveau client</summary>
+        <form id="client-form" class="grid">
+          <input name="first_name" placeholder="Prénom" required>
+          <input name="last_name" placeholder="Nom" required>
+          <input name="email" type="email" placeholder="Courriel">
+          <input name="phone" placeholder="Téléphone">
+          <button class="primary" type="submit">Créer le client</button>
+        </form>
+      </details>
+      <button data-go="home">Annuler</button>
+    </section>
+
+    <!-- Carte -->
+    <section id="screen-card" class="screen" hidden>
+      <h1>2. Carte</h1>
+      <p>Client : <b id="card-client"></b></p>
+      <form id="card-form" class="grid">
+        <select name="card_type_id" id="card-type" required></select>
+        <input name="name" placeholder="Nom de la carte (ex. Pikachu)" required>
+        <input name="set_name" placeholder="Série / collection">
+        <input name="year" type="number" min="1900" max="2100" placeholder="Année">
+        <input name="card_number" placeholder="Numéro (ex. 25/102)">
+        <button class="primary" type="submit">Commencer la capture</button>
+      </form>
+      <button data-go="client">Retour</button>
+    </section>
+
+    <!-- Capture -->
+    <section id="screen-capture" class="screen" hidden>
+      <h1>3. Capture</h1>
+      <div id="instruction" class="instruction"></div>
+      <div class="previews">
+        <figure><img id="img-front" alt=""><figcaption>Recto</figcaption></figure>
+        <figure><img id="img-back" alt=""><figcaption>Verso</figcaption></figure>
+      </div>
+      <div class="actions">
+        <button id="btn-capture" class="primary huge">CAPTURER</button>
+        <button id="btn-analyze" class="primary huge" hidden>ANALYSER</button>
+        <button id="btn-cancel" class="danger">Annuler la gradation</button>
+      </div>
+      <div id="sim-panel" class="sim" hidden>
+        <b>Simulation</b> — plateau : <span id="sim-state"></span>
+        <button id="sim-flip">Retourner la carte</button>
+        <button id="sim-random">Placer une nouvelle carte (centrage aléatoire)</button>
+      </div>
+    </section>
+
+    <!-- Révision -->
+    <section id="screen-review" class="screen" hidden>
+      <h1>4. Révision</h1>
+      <div id="review-instruction" class="instruction"></div>
+      <div id="centering-info" class="card-info"></div>
+      <form id="review-form" class="grades">
+        <label>Centrage <select name="centering_override"></select></label>
+        <label>Coins <select name="corners" required></select></label>
+        <label>Bordures <select name="edges" required></select></label>
+        <label>Surface <select name="surface" required></select></label>
+        <button class="primary huge" type="submit">Calculer la note</button>
+      </form>
+    </section>
+
+    <!-- Résultat -->
+    <section id="screen-result" class="screen" hidden>
+      <h1>Résultat</h1>
+      <div class="grade-big" id="final-grade"></div>
+      <div id="sim-badge" class="sim-badge" hidden>ANALYSE SIMULÉE — non valide</div>
+      <table id="subgrades" class="subgrades"></table>
+      <ul id="explanation"></ul>
+      <p class="muted">Note propre à OpGrade ; ne constitue pas une prédiction de note PSA, BGS ou CGC.</p>
+      <button class="primary huge" data-go="home">Terminer</button>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

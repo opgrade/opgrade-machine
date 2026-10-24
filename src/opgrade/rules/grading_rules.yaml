@@ -1,0 +1,43 @@
+# Règles de gradation OpGrade. Toute modification DOIT incrémenter `version`
+# (la version est enregistrée dans chaque analyse).
+version: "2026.10-1"
+
+scale:
+  min: 1
+  max: 10
+
+criteria: [centering, corners, edges, surface]
+
+# Pondération de la moyenne (somme = 1).
+weights:
+  centering: 0.15
+  corners: 0.30
+  edges: 0.25
+  surface: 0.30
+
+# La note finale ne peut pas dépasser la plus faible sous-note + cette valeur.
+cap_above_min_subgrade: 1
+
+# Centrage : part la plus grande de l'axe le pire (ex. 60 pour 60/40) -> note maximale.
+# Le verso est plus tolérant que le recto.
+centering:
+  front:
+    - { max_share: 55, grade: 10 }
+    - { max_share: 60, grade: 9 }
+    - { max_share: 65, grade: 8 }
+    - { max_share: 70, grade: 7 }
+    - { max_share: 75, grade: 6 }
+    - { max_share: 80, grade: 5 }
+    - { max_share: 85, grade: 4 }
+    - { max_share: 90, grade: 3 }
+    - { max_share: 95, grade: 2 }
+  back:
+    - { max_share: 75, grade: 10 }
+    - { max_share: 80, grade: 9 }
+    - { max_share: 85, grade: 8 }
+    - { max_share: 90, grade: 7 }
+    - { max_share: 95, grade: 6 }
+  fallback_grade: 1
+
+# Sous ce niveau de confiance, la mesure automatique doit être revue par l'opérateur.
+review_confidence_threshold: 0.8
