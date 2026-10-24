@@ -33,7 +33,17 @@ def _order_quad(pts: np.ndarray) -> np.ndarray:
 
 
 def detect_card(image: np.ndarray, width_mm: float, height_mm: float) -> CardDetection:
+    """Find the card on the black tray and rectify it (no backlight available)."""
+    return rectify(image, find_card_quad(image, width_mm, height_mm), width_mm, height_mm)
+
+
+def find_card_quad(image: np.ndarray, width_mm: float, height_mm: float, silhouette: bool = False) -> np.ndarray:
+    """Card corners (TL, TR, BR, BL). With silhouette=True the image is a backlit shot where the
+    card is dark on a bright tray: this works whatever the card colours (black-bordered cards
+    are invisible on a black tray)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if silhouette:
+        gray = 255 - gray
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     fg, bg = gray[mask > 0], gray[mask == 0]
@@ -68,7 +78,10 @@ def detect_card(image: np.ndarray, width_mm: float, height_mm: float) -> CardDet
             "Les proportions de la carte ne correspondent pas au type choisi "
             f"({measured_aspect:.3f} mesuré, {expected_aspect:.3f} attendu)."
         )
+    return quad
 
+
+def rectify(image: np.ndarray, quad: np.ndarray, width_mm: float, height_mm: float) -> CardDetection:
     out_w = int(round(width_mm * CANONICAL_PX_PER_MM))
     out_h = int(round(height_mm * CANONICAL_PX_PER_MM))
     dst = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]], np.float32)

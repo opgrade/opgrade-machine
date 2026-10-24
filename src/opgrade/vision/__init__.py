@@ -1,5 +1,5 @@
 from .centering import CenteringResult, measure_centering
-from .detect import CardDetection, DetectionError, detect_card
+from .detect import CardDetection, DetectionError, detect_card, find_card_quad, rectify
 from .flip import face_similarity, looks_like_same_side
 from .quality import QualityReport, assess_quality
 
@@ -11,6 +11,8 @@ __all__ = [
     "assess_quality",
     "detect_card",
     "face_similarity",
+    "find_card_quad",
+    "rectify",
     "looks_like_same_side",
     "measure_centering",
 ]

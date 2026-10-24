@@ -128,6 +128,7 @@ Contrôles obligatoires :
 | 12 | Alimentation 12 V 3 A pour LED | — | 20 $ |
 | 13 | Potence/rail caméra rigide (profilé alu 2020) | — | 40 $ |
 | 14 | Plateau + gabarits de positionnement imprimés 3D, fond noir mat (flocage) | PETG + flocage | 20 $ |
+| 14b | **Rétroéclairage du plateau** : panneau LED 5000 K sous une plaque d'acrylique opale 3 mm (zone carte ~110×130 mm) + 1 canal MOSFET | panneau LED + acrylique opale | 30–40 $ |
 | 15 | Boîtier fermé (contreplaqué/acrylique noir ou alu) | — | 60–120 $ |
 | 16 | Mire de calibration (ArUco/ChArUco imprimée sur support rigide) + carte gris 18 % / ColorChecker | — | 30–150 $ |
 | 17 | Visserie, connecteurs, câbles | — | 30 $ |
@@ -312,6 +313,8 @@ modèles IA, utilisateurs/rôles, sauvegardes, journaux, activation du mode simu
 | **Résolution insuffisante** pour les micro-défauts. IMX477 = 4056×3040 ; sur une carte 63×88 mm cadrée à ~95 mm de haut → ~32 px/mm (~31 µm/px). Le blanchiment de coin est visible, les micro-rayures fines sont limites. | Élevé | **Test n°1** : photographier 10 cartes connues, vérifier visuellement les défauts. Option : captures zoomées des coins (2e position caméra ou objectif macro en V2). |
 | **Reflets** sur cartes holographiques/brillantes | Élevé | Polariseurs croisés (filtre sur objectif + film polarisant sur LED), test A/B |
 | **Répétabilité** du positionnement manuel | Moyen | Butées + redressement logiciel ; test : 20 captures de la même carte, écart-type du centrage < 0,5 % |
+| **Cartes à bordure noire sur plateau noir** : détection ratée ou, pire, recadrage silencieux sur la zone intérieure | Élevé | Plateau rétroéclairé + capture silhouette (implémenté, validé en simulation) |
+| **Reconnaissance visuelle sur vraies photos** : empreintes calibrées sur images catalogue ; reflets, holo et différences impression/scan augmentent les distances | Moyen | Évaluer sur ≥ 100 vraies cartes au banc optique et recalibrer les seuils (`identify/visual.py`) ; l'opérateur confirme toujours |
 | **Centrage des cartes sans bordure** (full art) | Moyen | Profil « sans bordure » → centrage non mesurable automatiquement → saisie opérateur + confiance faible |
 | **Manque de données étiquetées** | Très élevé | Commencer la collecte dès la V1 ; partenariat avec un expert/grader |
 | **Fiabilité des notes vs experts** | Très élevé | Lot de référence (≥ 100 cartes déjà gradées PSA/BGS) ; mesurer l'accord (±1 note) |
@@ -364,8 +367,9 @@ La V1 est « fonctionnelle » quand **tous** ces critères sont vérifiés par d
 
 1. **Investir d'abord dans l'optique et l'éclairage**, pas dans l'IA. Une bonne image facilite
    tout le reste ; une mauvaise image rend tout impossible.
-2. **Fond noir mat + butées** sur le plateau : la détection de la carte devient triviale et
-   robuste.
+2. **Plateau rétroéclairé + butées** : une capture « silhouette » (rétroéclairage seul) localise
+   n'importe quelle carte. Sur fond noir seul, les cartes à bordure noire (Magic anciennes…)
+   sont mal détectées : 31 échecs sur 120 en simulation, 0 avec la silhouette (2026-10-24).
 3. **Polariseurs croisés** dès la V1 pour les cartes brillantes.
 4. **Collecter des données dès la première carte** : la V1 est aussi un outil de collecte.
 5. **Lot de référence** de cartes déjà gradées (PSA/BGS/CGC) pour mesurer l'accord.
@@ -385,7 +389,7 @@ La V1 est « fonctionnelle » quand **tous** ces critères sont vérifiés par d
 | 4 | Protection | Analyse **hors protection** uniquement | Instruction opérateur « retirer la carte de sa protection » |
 | 5 | Données de référence | Pas d'expert ; **cartes déjà gradées** (PSA/BGS/CGC) | Lot de référence = vérité terrain ; saisir la note officielle + n° de certification ; l'annotation fine des défauts reste à faire en interne |
 | 6–7 | Matériel acheté | Raspberry Pi 5, **Arducam IMX477**, objectif **CS 6 mm (1/2,3")**, **écran tactile 7"** | Voir note objectif ci-dessous |
-| 8 | Identification | **Reconnaissance automatique tôt** | ✅ Module `identify/` : recherche par nom/numéro/série dans TCGdex (Pokémon, FR+EN), Scryfall (Magic), YGOPRODeck (Yu‑Gi‑Oh!). La Pokémon TCG API, testée le 2026-10-24, échouait sur ~50 % des requêtes : elle reste disponible en alternative. Étape suivante : reconnaissance par l'image capturée. Sport : pas de base ouverte équivalente → saisie manuelle |
+| 8 | Identification | **Reconnaissance automatique tôt** | ✅ Module `identify/` : recherche par nom/numéro/série dans TCGdex (Pokémon, FR+EN), Scryfall (Magic), YGOPRODeck (Yu‑Gi‑Oh!). La Pokémon TCG API, testée le 2026-10-24, échouait sur ~50 % des requêtes : elle reste disponible en alternative. ✅ Reconnaissance par l'image capturée : index visuel local (empreintes pHash), hors ligne une fois construit (voir §15). Sport : pas de base ouverte équivalente → saisie manuelle |
 | 9 | Langue | **Français + anglais** | Interface et rapports bilingues (fichiers de traduction) |
 | 10 | Loi 25 | **Minimum + consentement** | Client = nom + 1 moyen de contact ; date de consentement enregistrée ; suppression/anonymisation sur demande |
 | 11 | Licence | **Propriétaire**, dépôt privé | Déjà indiqué dans le README |
@@ -400,3 +404,39 @@ mise au point minimale de certains 6 mm est justement autour de 10–20 cm (à v
 **Recommandation** : l'utiliser pour les premiers essais (la calibration corrige la distorsion),
 mais prévoir un objectif **12 mm ou 16 mm** (~19 ou ~25 cm de distance), plus adapté à la
 mesure. Résolution attendue dans tous les cas : ~40 px/mm si la carte remplit le champ.
+
+---
+
+## 15. Reconnaissance de la carte par l'image (2026-10-24)
+
+### Méthode
+
+1. Capture **silhouette** (rétroéclairage) → localisation de la carte ; capture éclairée → redressement.
+2. Empreinte : deux pHash 64 bits (carte entière + zone d'illustration).
+3. Recherche du plus proche voisin (distance de Hamming) dans un **index local**
+   (`data/card_index.db`) construit une fois depuis les images des catalogues :
+   `python -m opgrade.identify.build_index tcgdex` (~22 000 cartes, ~2–3 min sur PC, ~450 Mo
+   téléchargés, quelques Mo stockés). Ensuite, **fonctionne hors ligne**.
+4. L'opérateur **confirme toujours** la carte proposée.
+
+### Résultats en simulation (`scripts/eval_visual.py`)
+
+Images catalogue réelles « photographiées » par le simulateur (rotation ±6°, éclairage ±25 %,
+flou, bruit, dominante de couleur, JPEG).
+
+| Catalogue (taille de l'index) | Top‑1 exact | Top‑5 | Bon nom en 1er | Détection ratée |
+|---|---|---|---|---|
+| TCGdex — catalogue complet (21 987) | 99,0 % | 100 % | 100 % | 0 / 200 |
+| Scryfall (1 500) — avec silhouette | 100 % | 100 % | 100 % | 0 / 120 |
+| Scryfall (1 500) — fond noir seul | 95,5 % | 95,5 % | 95,5 % | **31 / 120** |
+| YGOPRODeck (1 500) — fond noir seul | 99,2 % | 99,2 % | 99,2 % | 2 / 120 |
+
+**Limites** :
+- C'est une borne **optimiste** : les requêtes viennent des mêmes images que l'index. Il faut
+  refaire l'évaluation sur ≥ 100 vraies cartes photographiées au banc optique, puis recalibrer
+  les seuils (`identify/visual.py`).
+- Les **réimpressions à illustration identique** (même carte dans plusieurs séries) ne se
+  distinguent pas par l'image : la machine le signale et l'opérateur vérifie série et numéro.
+  Piste : lire le numéro imprimé (OCR) pour départager.
+- Yu‑Gi‑Oh! : l'index contient une entrée par illustration ; l'édition (code de set) est ensuite
+  choisie par recherche texte.

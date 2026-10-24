@@ -103,31 +103,58 @@ function clearIdentity() {
   $("#identified").hidden = true;
 }
 
+const CONFIDENCE_LABELS = { high: "Très probable", medium: "Possible", low: "Peu probable" };
+
 $("#card-type").addEventListener("change", () => {
   const type = selectedCardType();
   clearIdentity(); $("#candidates").innerHTML = "";
-  $("#btn-identify").hidden = !(type && type.catalog);
+  $("#btn-identify").hidden = $("#btn-identify-camera").hidden = !(type && type.catalog);
+  $("#sim-identify").hidden = !(state.status.simulation && type && type.catalog);
   identifyMessage(type && !type.catalog ? "Pas de catalogue en ligne pour ce type : saisie manuelle." : "");
+  refreshSim();
 });
 
-$("#btn-identify").addEventListener("click", (e) => busy(e.target, async () => {
+function showCandidates(r) {
+  identifyMessage(r.message || `${r.candidates.length} résultat(s) — touchez la bonne carte.`);
+  $("#candidates").innerHTML = r.candidates.map((c, i) => `
+    <li data-i="${i}">${c.image_url ? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}
+      <b>${esc(c.name)}</b><br>${esc(c.set_name)}${c.number ? " · " + esc(c.number) : ""}${c.year ? " · " + c.year : ""}
+      ${c.confidence ? `<br><span class="conf ${c.confidence}">${CONFIDENCE_LABELS[c.confidence]}</span>` : ""}</li>`).join("");
+  $("#candidates").results = r.candidates;
+}
+
+async function searchByName() {
   const name = cardForm.name.value.trim();
   if (name.length < 2) { identifyMessage("Tapez au moins 2 lettres du nom de la carte."); return; }
   const params = new URLSearchParams({ card_type_id: cardForm.card_type_id.value, name });
   if (cardForm.card_number.value.trim()) params.set("number", cardForm.card_number.value.trim());
   if (cardForm.set_name.value.trim()) params.set("set_name", cardForm.set_name.value.trim());
   identifyMessage("Recherche…");
-  const r = await api("GET", "/api/identify?" + params);
-  identifyMessage(r.message || `${r.candidates.length} résultat(s) — touchez la bonne carte.`);
-  $("#candidates").innerHTML = r.candidates.map((c, i) => `
-    <li data-i="${i}">${c.image_url ? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}
-      <b>${esc(c.name)}</b><br>${esc(c.set_name)}${c.number ? " · " + esc(c.number) : ""}${c.year ? " · " + c.year : ""}</li>`).join("");
-  $("#candidates").results = r.candidates;
+  showCandidates(await api("GET", "/api/identify?" + params));
+}
+
+$("#btn-identify").addEventListener("click", (e) => busy(e.target, searchByName));
+
+$("#btn-identify-camera").addEventListener("click", (e) => busy(e.target, async () => {
+  identifyMessage("Placez la carte RECTO vers le haut… capture en cours.");
+  showCandidates(await api("POST", "/api/identify/image", { card_type_id: Number(cardForm.card_type_id.value) }));
 }));
 
-$("#candidates").addEventListener("click", (e) => {
+$("#sim-place-ref").addEventListener("click", (e) => busy(e.target, async () => {
+  const type = selectedCardType();
+  await api("POST", "/api/sim/place-reference", { catalog: type.catalog });
+  refreshSim();
+}));
+
+$("#candidates").addEventListener("click", async (e) => {
   const li = e.target.closest("li"); if (!li) return;
   const c = $("#candidates").results[Number(li.dataset.i)];
+  if (!c.set_name && !c.number) {
+    // Artwork recognised but not the printing (e.g. Yu-Gi-Oh!): list printings by name.
+    cardForm.name.value = c.name;
+    try { await searchByName(); } catch (err) { toast(err.message); }
+    return;
+  }
   cardForm.name.value = c.name;
   cardForm.set_name.value = c.set_name || "";
   cardForm.card_number.value = c.number || "";
@@ -152,7 +179,8 @@ $("#card-form").addEventListener("submit", async (e) => {
   try {
     const card = await api("POST", "/api/cards", body);
     openSession(await api("POST", "/api/sessions", { card_id: card.id }));
-    e.target.reset(); clearIdentity(); identifyMessage(""); $("#btn-identify").hidden = true;
+    e.target.reset(); clearIdentity(); identifyMessage("");
+    $("#btn-identify").hidden = $("#btn-identify-camera").hidden = $("#sim-identify").hidden = true;
   } catch (err) { toast(err.message); }
 });
 
@@ -197,6 +225,7 @@ async function refreshSim() {
   if (!state.status.simulation) return;
   const t = await api("GET", "/api/sim/table");
   $("#sim-state").textContent = t.card_present ? (t.side_up === "front" ? "recto visible" : "verso visible") : "vide";
+  document.querySelectorAll(".sim-label").forEach((el) => (el.textContent = t.label ? "« " + t.label + " »" : "carte synthétique"));
 }
 $("#sim-flip").addEventListener("click", async () => { await api("POST", "/api/sim/flip"); refreshSim(); });
 $("#sim-random").addEventListener("click", async () => {

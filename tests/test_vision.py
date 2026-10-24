@@ -1,8 +1,17 @@
+import numpy as np
 import pytest
 
 from opgrade.hardware import LightingMode, Side
 from opgrade.hardware.sim import SimCardSpec, render_scene
-from opgrade.vision import DetectionError, assess_quality, detect_card, looks_like_same_side, measure_centering
+from opgrade.vision import (
+    DetectionError,
+    assess_quality,
+    detect_card,
+    find_card_quad,
+    looks_like_same_side,
+    measure_centering,
+    rectify,
+)
 
 
 def _warped(spec: SimCardSpec, side: Side = Side.FRONT):
@@ -53,6 +62,24 @@ def test_dark_image_fails_quality():
     except DetectionError:
         return  # also acceptable: nothing usable detected
     assert not assess_quality(warped).ok
+
+
+def test_black_bordered_card_needs_backlight():
+    black_card = np.full((880, 630, 3), 18, np.uint8)  # e.g. old Magic card border
+    black_card[60:820, 50:580] = (90, 120, 160)
+    spec = SimCardSpec(front_image=black_card, rotation_deg=2.0)
+    photo = render_scene(spec, Side.FRONT, LightingMode.DIFFUSE)
+    # On the black tray the border is invisible: detection fails or, worse, silently finds the
+    # inner area only.
+    try:
+        quad = find_card_quad(photo, 63, 88)
+        assert abs(np.linalg.norm(quad[1] - quad[0]) - 630) > 50
+    except DetectionError:
+        pass
+    quad = find_card_quad(render_scene(spec, Side.FRONT, LightingMode.BACKLIGHT), 63, 88, silhouette=True)
+    assert abs(np.linalg.norm(quad[1] - quad[0]) - 630) < 6  # full card width found
+    warped = rectify(photo, quad, 63, 88).warped
+    assert warped.shape[:2] == (880, 630)
 
 
 def test_flip_detection():

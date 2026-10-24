@@ -6,6 +6,9 @@ from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import cv2
+import httpx
+import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +22,9 @@ from ..grading import load_rules
 from ..hardware import Hardware, Side, build_hardware
 from ..hardware.sim import SimCardSpec, SimulatedCamera
 from ..identify import CardCatalog, CardQuery, CatalogError, build_catalog
-from ..orchestration import GradingService, InvalidTransition, WorkflowError
+from ..identify.base import USER_AGENT
+from ..identify.visual import REPRINT_MARGIN, VisualIndex, fingerprint
+from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
 from . import schemas
 
 
@@ -27,10 +32,12 @@ def create_app(
     settings: Settings | None = None,
     hardware: Hardware | None = None,
     catalogs: dict[str, CardCatalog] | None = None,
+    visual_index: VisualIndex | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     hardware = hardware or build_hardware(settings.simulation)
     catalogs = dict(catalogs or {})
+    visual_index = visual_index or VisualIndex(settings.data_dir / "card_index.db")
 
     def get_catalog(catalog_id: str) -> CardCatalog:
         if catalog_id not in catalogs:
@@ -132,6 +139,41 @@ def create_app(
         message = None if found else "Aucune carte trouvée. Vérifiez l'orthographe ou saisissez manuellement."
         return {"catalog": card_type.catalog, "available": True, "message": message, "candidates": [c.as_dict() for c in found]}
 
+    @app.post("/api/identify/image", response_model=schemas.IdentifyOut)
+    def identify_image(body: schemas.IdentifyImageIn, db: Session = Depends(get_db)):
+        card_type = db.get(CardType, body.card_type_id)
+        if card_type is None:
+            raise HTTPException(404, "Type de carte introuvable.")
+        catalog = card_type.catalog
+        if not catalog or visual_index.count(catalog) == 0:
+            hint = f" Construisez-le : python -m opgrade.identify.build_index {catalog}" if catalog else ""
+            return {
+                "catalog": catalog,
+                "available": False,
+                "message": "Pas d'index visuel pour ce type de carte : recherche par nom ou saisie manuelle." + hint,
+                "candidates": [],
+            }
+        try:
+            _, detection, _ = service.acquire(card_type)
+        except AcquisitionError as exc:
+            return {"catalog": catalog, "available": True, "message": f"Capture refusée : {exc}", "candidates": []}
+
+        matches = visual_index.search(catalog, fingerprint(detection.warped))
+        candidates = [{**m.candidate.as_dict(), "distance": m.distance, "confidence": m.confidence} for m in matches]
+        if not matches or matches[0].confidence == "low":
+            message = "Carte non reconnue avec certitude : vérifiez les propositions ou recherchez par nom."
+        elif matches[0].confidence == "medium":
+            message = "Reconnaissance incertaine : vérifiez la carte proposée."
+        elif len(matches) > 1 and matches[1].distance - matches[0].distance <= REPRINT_MARGIN:
+            # Same artwork reprinted in several sets: the image alone cannot tell them apart.
+            message = (
+                "Plusieurs éditions ont la même illustration : vérifiez la série et le numéro "
+                "imprimés sur la carte avant de choisir."
+            )
+        else:
+            message = "Carte reconnue — confirmez en touchant la bonne carte."
+        return {"catalog": catalog, "available": True, "message": message, "candidates": candidates}
+
     @app.post("/api/cards", response_model=schemas.CardOut, status_code=201)
     def create_card(body: schemas.CardIn, db: Session = Depends(get_db)):
         if db.get(Client, body.client_id) is None:
@@ -199,7 +241,29 @@ def create_app(
 
         @app.get("/api/sim/table")
         def sim_table() -> dict:
-            return {"card_present": table.card is not None, "side_up": table.side_up.value}
+            return {
+                "card_present": table.card is not None,
+                "side_up": table.side_up.value,
+                "label": table.card.label if table.card else None,
+            }
+
+        @app.post("/api/sim/place-reference")
+        def sim_place_reference(body: schemas.SimReferenceIn) -> dict:
+            """Put a random indexed catalog card on the tray (needs Internet for its image)."""
+            ref = visual_index.random_reference(body.catalog)
+            if ref is None:
+                raise HTTPException(409, f"Index visuel vide pour {body.catalog}.")
+            try:
+                response = httpx.get(ref.image_url, timeout=20, headers={"User-Agent": USER_AGENT})
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise HTTPException(502, f"Image de référence inaccessible : {exc}") from exc
+            image = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                raise HTTPException(502, "Image de référence illisible.")
+            label = " · ".join(str(v) for v in (ref.name, ref.set_name, ref.number) if v)
+            table.place(SimCardSpec(front_image=image, label=label, rotation_deg=float(np.random.uniform(-4, 4))))
+            return sim_table()
 
         @app.post("/api/sim/place")
         def sim_place(body: schemas.SimCardIn | None = None) -> dict:

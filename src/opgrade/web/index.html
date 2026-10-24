@@ -53,7 +53,14 @@
         <input type="hidden" name="external_source">
         <input type="hidden" name="external_id">
         <input type="hidden" name="reference_image_url">
-        <button id="btn-identify" type="button" hidden>Rechercher dans le catalogue</button>
+        <div class="identify-actions">
+          <button id="btn-identify-camera" type="button" class="primary" hidden>Identifier avec la caméra</button>
+          <button id="btn-identify" type="button" hidden>Rechercher par nom</button>
+        </div>
+        <div id="sim-identify" class="sim" hidden>
+          <b>Simulation</b> — plateau : <span class="sim-label"></span>
+          <button id="sim-place-ref" type="button">Placer une carte du catalogue</button>
+        </div>
         <p id="identify-message" class="muted" hidden></p>
         <div id="identified" class="identified" hidden>
           <img id="identified-img" alt="">
@@ -80,7 +87,7 @@
         <button id="btn-cancel" class="danger">Annuler la gradation</button>
       </div>
       <div id="sim-panel" class="sim" hidden>
-        <b>Simulation</b> — plateau : <span id="sim-state"></span>
+        <b>Simulation</b> — plateau : <span id="sim-state"></span> <span class="sim-label muted"></span>
         <button id="sim-flip">Retourner la carte</button>
         <button id="sim-random">Placer une nouvelle carte (centrage aléatoire)</button>
       </div>

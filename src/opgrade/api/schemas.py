@@ -141,6 +141,17 @@ class CandidateOut(BaseModel):
     rarity: str | None
     language: str | None
     image_url: str | None
+    # Image recognition only: fingerprint distance (0 = identical, 128 = max) and its reading.
+    distance: int | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
+
+
+class IdentifyImageIn(BaseModel):
+    card_type_id: int
+
+
+class SimReferenceIn(BaseModel):
+    catalog: CatalogId = "tcgdex"
 
 
 class IdentifyOut(BaseModel):

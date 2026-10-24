@@ -21,6 +21,9 @@ class Side(str, Enum):
 class LightingMode(str, Enum):
     OFF = "off"
     DIFFUSE = "diffuse"
+    # Light panel under the translucent tray: the card appears as a dark silhouette, used to
+    # locate it precisely whatever its colours.
+    BACKLIGHT = "backlight"
     # Raking lights (low angle) reveal scratches and dents; used from V1.x multi-light capture.
     RAKING_NORTH = "raking_north"
     RAKING_SOUTH = "raking_south"
@@ -54,6 +57,7 @@ class Hardware:
     camera: Camera
     lighting: Lighting
     simulated: bool
+    has_backlight: bool = False
 
     def close(self) -> None:
         self.lighting.off()

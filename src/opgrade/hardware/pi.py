@@ -19,6 +19,7 @@ DEFAULT_LIGHT_PINS: dict[LightingMode, int] = {
     LightingMode.RAKING_SOUTH: 24,
     LightingMode.RAKING_EAST: 25,
     LightingMode.RAKING_WEST: 12,
+    LightingMode.BACKLIGHT: 16,
 }
 
 
@@ -66,5 +67,6 @@ class GpioLighting(Lighting):
         return self._mode
 
 
-def build_pi_hardware() -> Hardware:
-    return Hardware(camera=PiCamera(), lighting=GpioLighting(), simulated=False)
+def build_pi_hardware(has_backlight: bool = False) -> Hardware:
+    # Set has_backlight once the backlit tray (LED panel under opal acrylic) is built.
+    return Hardware(camera=PiCamera(), lighting=GpioLighting(), simulated=False, has_backlight=has_backlight)

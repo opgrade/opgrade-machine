@@ -33,6 +33,10 @@ class SimCardSpec:
     rotation_deg: float = 1.5
     blur: float = 0.0
     seed: int = 7
+    # Optional real card picture (BGR) used as the front face, e.g. a catalog scan.
+    front_image: np.ndarray | None = field(default=None, repr=False)
+    label: str | None = None  # what the card really is, shown in the simulation panel
+    brightness: float = 1.0  # lighting variation between captures
 
 
 @dataclass
@@ -77,6 +81,8 @@ _BACK_BORDER = (185, 95, 35)  # dark blue
 def _render_face(spec: SimCardSpec, side: Side) -> np.ndarray:
     w = int(round(spec.width_mm * SIM_PX_PER_MM))
     h = int(round(spec.height_mm * SIM_PX_PER_MM))
+    if side == Side.FRONT and spec.front_image is not None:
+        return cv2.resize(spec.front_image, (w, h), interpolation=cv2.INTER_CUBIC)
     rng = np.random.default_rng(spec.seed + (0 if side == Side.FRONT else 1000))
     border_px = spec.border_mm * SIM_PX_PER_MM
     if side == Side.FRONT:
@@ -107,7 +113,10 @@ def _render_face(spec: SimCardSpec, side: Side) -> np.ndarray:
 
 def render_scene(spec: SimCardSpec | None, side: Side, lighting: LightingMode) -> np.ndarray:
     rng = np.random.default_rng(1)
-    canvas = np.clip(rng.normal(14, 3, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
+    if lighting == LightingMode.BACKLIGHT:
+        canvas = np.clip(rng.normal(235, 4, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
+    else:
+        canvas = np.clip(rng.normal(14, 3, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
     if spec is not None:
         face = _render_face(spec, side)
         h, w = face.shape[:2]
@@ -116,8 +125,13 @@ def render_scene(spec: SimCardSpec | None, side: Side, lighting: LightingMode) -
         m[0, 2] += cx - w / 2
         m[1, 2] += cy - h / 2
         mask = cv2.warpAffine(np.full((h, w), 255, np.uint8), m, (CANVAS_W, CANVAS_H))
+        if lighting == LightingMode.BACKLIGHT:  # opaque card: dark silhouette, colours irrelevant
+            canvas[mask > 127] = 25
+            return canvas
         warped = cv2.warpAffine(face, m, (CANVAS_W, CANVAS_H), flags=cv2.INTER_LINEAR)
         canvas[mask > 127] = warped[mask > 127]
+        if spec.brightness != 1.0:
+            canvas = np.clip(canvas.astype(np.float32) * spec.brightness, 0, 255).astype(np.uint8)
         if spec.blur > 0:
             canvas = cv2.GaussianBlur(canvas, (0, 0), spec.blur)
 
@@ -140,4 +154,4 @@ class SimulatedCamera(Camera):
 def build_simulated_hardware(table: SimTable | None = None) -> Hardware:
     lighting = SimulatedLighting()
     camera = SimulatedCamera(table or SimTable(), lighting)
-    return Hardware(camera=camera, lighting=lighting, simulated=True)
+    return Hardware(camera=camera, lighting=lighting, simulated=True, has_backlight=True)

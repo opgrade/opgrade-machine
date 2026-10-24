@@ -39,6 +39,9 @@ details { margin: 16px 0; } summary { cursor: pointer; padding: 10px 0; color: v
 .sim-badge { text-align: center; background: var(--warn); color: #111; font-weight: 700; padding: 8px; border-radius: 8px; }
 table { width: 100%; border-collapse: collapse; } td, th { padding: 10px; border-bottom: 1px solid #2a2f3a; text-align: left; }
 .muted { color: var(--muted); font-size: .85rem; }
+.identify-actions { display: flex; gap: 10px; } .identify-actions button { flex: 1; }
+.conf { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; color: #111; }
+.conf.high { background: var(--ok); } .conf.medium { background: var(--warn); } .conf.low { background: var(--danger); color: #fff; }
 .candidates { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .candidates li { background: var(--panel); border-radius: 10px; padding: 8px; cursor: pointer; font-size: .85rem; text-align: center; }
 .candidates li:active { outline: 2px solid var(--accent); }

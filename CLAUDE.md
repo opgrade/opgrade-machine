@@ -24,6 +24,8 @@ uv venv --python 3.11 .venv
 uv pip install --python .venv -e ".[dev]"
 .venv/Scripts/python -m pytest            # Windows ; .venv/bin/python sur Linux/Pi
 .venv/Scripts/python -m opgrade           # serveur sur http://127.0.0.1:8000 (simulation par défaut)
+.venv/Scripts/python -m opgrade.identify.build_index tcgdex   # index visuel (aussi scryfall, ygoprodeck)
+.venv/Scripts/python scripts/eval_visual.py --catalog tcgdex  # précision de la reconnaissance (réseau)
 ```
 
 Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
@@ -37,7 +39,7 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 | `orchestration/` | Machine à états d'une session de gradation (`state_machine.py`) et service qui l'exécute (`service.py`) |
 | `vision/` | Détection/redressement de la carte, contrôle qualité image, centrage, détection de retournement |
 | `grading/` | Règles versionnées (`src/opgrade/rules/grading_rules.yaml`) et moteur de calcul de la note |
-| `identify/` | Identification en ligne : TCGdex (Pokémon, FR+EN), Scryfall (Magic), YGOPRODeck (Yu‑Gi‑Oh!), Pokémon TCG API (alternative). Catalogue choisi par `CardType.catalog` |
+| `identify/` | Identification : recherche texte en ligne (`catalogs.py` : TCGdex, Scryfall, YGOPRODeck, Pokémon TCG API) et **reconnaissance par image** hors ligne (`visual.py` : empreintes pHash + index `data/card_index.db` ; `build_index.py` le construit depuis `sources.py`). Catalogue choisi par `CardType.catalog` |
 | `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes), mini-migration (ajout de colonnes) |
 | `api/` | Application FastAPI et routes |
 | `web/` | Interface tactile (statique) |
@@ -74,7 +76,12 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 
 Fait : simulation caméra/éclairage, base SQLite, clients/types/cartes, machine à états avec
 retournement manuel guidé, contrôle qualité image, mesure du centrage, moteur de notation,
-identification par nom/numéro/série dans les catalogues en ligne, API + UI tactile, tests.
+identification par nom/numéro/série dans les catalogues en ligne, reconnaissance de la carte par
+la caméra (index visuel local), capture « silhouette » sur plateau rétroéclairé, API + UI, tests.
+
+Acquisition (`GradingService.acquire`) : si `Hardware.has_backlight`, photo en rétroéclairage pour
+localiser la carte, puis photo éclairée pour l'analyse. Ne pas détecter sur fond noir seul quand un
+rétroéclairage existe (les bordures noires disparaissent).
 
 Les tests de `identify/` simulent HTTP (`httpx.MockTransport`) avec des réponses calquées sur les
 vraies API ; revérifier en direct quand on touche un adaptateur.

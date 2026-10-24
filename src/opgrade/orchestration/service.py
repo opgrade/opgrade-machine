@@ -10,10 +10,18 @@ import cv2
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..data.models import Capture, Card, GradingSession, Measurement, Subgrade
+from ..data.models import Capture, Card, CardType, GradingSession, Measurement, Subgrade
 from ..grading import GradingRules, centering_grade, compute_final_grade
 from ..hardware.base import Hardware, LightingMode, Side
-from ..vision import DetectionError, assess_quality, detect_card, looks_like_same_side, measure_centering
+from ..vision import (
+    DetectionError,
+    assess_quality,
+    detect_card,
+    find_card_quad,
+    looks_like_same_side,
+    measure_centering,
+    rectify,
+)
 from .state_machine import CAPTURE_SIDE, INSTRUCTIONS, SessionState, check_transition
 
 OPERATOR_CRITERIA = ("corners", "edges", "surface")
@@ -21,6 +29,10 @@ OPERATOR_CRITERIA = ("corners", "edges", "surface")
 
 class WorkflowError(Exception):
     """Operation not allowed in the current state. Message is operator-facing (French)."""
+
+
+class AcquisitionError(Exception):
+    """No usable card image (no card, wrong format, blur…). Message is operator-facing (French)."""
 
 
 @dataclass
@@ -61,6 +73,34 @@ class GradingService:
             raise WorkflowError(f"Image illisible : {cap.warped_path}.")
         return img
 
+    def acquire(self, card_type: CardType, lighting: LightingMode = LightingMode.DIFFUSE):
+        """Light, shoot, find and rectify the card, check image quality.
+
+        Returns (raw, detection, quality); raises AcquisitionError with the operator message.
+        """
+        silhouette = None
+        try:
+            if self.hardware.has_backlight:
+                # Silhouette first: locates any card, even black-bordered ones on the black tray.
+                self.hardware.lighting.set_mode(LightingMode.BACKLIGHT)
+                silhouette = self.hardware.camera.capture()
+            self.hardware.lighting.set_mode(lighting)
+            raw = self.hardware.camera.capture()
+        finally:
+            self.hardware.lighting.off()
+        w, h = card_type.width_mm, card_type.height_mm
+        try:
+            if silhouette is not None:
+                detection = rectify(raw, find_card_quad(silhouette, w, h, silhouette=True), w, h)
+            else:
+                detection = detect_card(raw, w, h)
+        except DetectionError as exc:
+            raise AcquisitionError(str(exc)) from exc
+        quality = assess_quality(detection.warped)
+        if not quality.ok:
+            raise AcquisitionError(" ".join(quality.problems))
+        return raw, detection, quality
+
     # -- workflow --------------------------------------------------------------------------
 
     def start_session(self, db: Session, card_id: int, operator: str | None = None) -> GradingSession:
@@ -88,21 +128,10 @@ class GradingService:
             raise WorkflowError("Aucune capture n'est attendue à cette étape.")
 
         lighting = LightingMode.DIFFUSE
-        self.hardware.lighting.set_mode(lighting)
         try:
-            raw = self.hardware.camera.capture()
-        finally:
-            self.hardware.lighting.off()
-
-        card_type = gs.card.card_type
-        try:
-            detection = detect_card(raw, card_type.width_mm, card_type.height_mm)
-        except DetectionError as exc:
+            raw, detection, quality = self.acquire(gs.card.card_type, lighting)
+        except AcquisitionError as exc:
             return self._reject(db, gs, str(exc))
-
-        quality = assess_quality(detection.warped)
-        if not quality.ok:
-            return self._reject(db, gs, " ".join(quality.problems))
 
         if side == Side.BACK and looks_like_same_side(self._load_warped(gs, Side.FRONT), detection.warped):
             return self._reject(db, gs, "La carte ne semble pas avoir été retournée. RETOURNEZ la carte puis recommencez.")
