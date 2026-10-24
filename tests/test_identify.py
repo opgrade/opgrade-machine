@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from opgrade.api import create_app
-from helpers import create_client
+from helpers import create_client, login
 from opgrade.config import Settings
 from opgrade.identify import (
     CardQuery,
@@ -218,6 +218,7 @@ def api(tmp_path):
     for catalog in catalogs.values():
         catalog.retry_delay = 0
     with TestClient(create_app(Settings(simulation=True, data_dir=tmp_path), catalogs=catalogs)) as c:
+        login(c)
         yield c
 
 

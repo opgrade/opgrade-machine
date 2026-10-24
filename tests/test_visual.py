@@ -12,6 +12,7 @@ from opgrade.identify import CardCandidate
 from opgrade.identify.build_index import build
 from opgrade.identify.visual import VisualIndex, _to_sql, fingerprint, popcount64
 from opgrade.vision import detect_card
+from helpers import login
 
 
 def card_picture(seed: int) -> np.ndarray:
@@ -91,6 +92,7 @@ def api_with_index(tmp_path):
     index.add_many([(ref(i), fingerprint(card_picture(i))) for i in range(30)])
     app = create_app(Settings(simulation=True, data_dir=tmp_path), visual_index=index)
     with TestClient(app) as c:
+        login(c)
         yield c, app.state.hardware.camera.table
 
 
@@ -116,6 +118,7 @@ def test_identify_image_warns_on_same_artwork_reprints(tmp_path):
     index.add_many([(reprint, fingerprint(card_picture(12))), (ref(12), fingerprint(card_picture(12)))])
     app = create_app(Settings(simulation=True, data_dir=tmp_path), visual_index=index)
     with TestClient(app) as client:
+        login(client)
         app.state.hardware.camera.table.place(SimCardSpec(front_image=card_picture(12)))
         r = client.post("/api/identify/image", json={"card_type_id": _type_id(client, "pokemon")}).json()
     assert {c["external_id"] for c in r["candidates"][:2]} == {"en:set-12", "en:other-12"}

@@ -5,15 +5,17 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import audit
 from ..customers import orders as order_rules
 from ..customers import privacy
 from ..data import Client, Order
 from . import schemas
+from .auth import client_ip, current_user
 
 
 def client_out(client: Client, policy: privacy.PrivacyPolicy) -> dict:
@@ -47,8 +49,9 @@ def order_out(order: Order, with_cards: bool = False) -> dict:
     return data
 
 
-def build_router(get_db: Callable, policy: privacy.PrivacyPolicy) -> APIRouter:
+def build_router(get_db: Callable, policy: privacy.PrivacyPolicy, require_admin: Callable) -> APIRouter:
     router = APIRouter()
+    admin = [Depends(require_admin)]
 
     def get_client(db: Session, client_id: int) -> Client:
         client = db.get(Client, client_id)
@@ -89,14 +92,15 @@ def build_router(get_db: Callable, policy: privacy.PrivacyPolicy) -> APIRouter:
         return [client_out(c, policy) for c in db.scalars(stmt)]
 
     @router.post("/api/clients", response_model=schemas.ClientOut, status_code=201)
-    def create_client(body: schemas.ClientIn, db: Session = Depends(get_db)):
+    def create_client(body: schemas.ClientIn, request: Request, db: Session = Depends(get_db)):
         if body.consent_policy_version != policy.version:
             raise HTTPException(409, "L'avis de confidentialité a changé : rechargez la page et faites relire l'avis.")
         client = Client(**body.model_dump(include=set(schemas.ClientFields.model_fields)))
         db.add(client)
         db.flush()
-        privacy.record_consent(db, client, "service", True, policy, body.consent_method)
-        privacy.record_consent(db, client, "marketing", body.consent_marketing, policy, body.consent_method)
+        by = current_user(request).username
+        privacy.record_consent(db, client, "service", True, policy, body.consent_method, by)
+        privacy.record_consent(db, client, "marketing", body.consent_marketing, policy, body.consent_method, by)
         db.commit()
         return client_out(client, policy)
 
@@ -117,20 +121,19 @@ def build_router(get_db: Callable, policy: privacy.PrivacyPolicy) -> APIRouter:
         return client_out(client, policy)
 
     @router.post("/api/clients/{client_id}/consent", response_model=schemas.ClientOut)
-    def give_consent(client_id: int, body: schemas.ConsentIn, db: Session = Depends(get_db)):
+    def give_consent(client_id: int, body: schemas.ConsentIn, request: Request, db: Session = Depends(get_db)):
         client = get_client(db, client_id)
         if body.policy_version != policy.version:
             raise HTTPException(409, "L'avis de confidentialité a changé : rechargez la page et faites relire l'avis.")
-        privacy.record_consent(db, client, body.kind, body.granted, policy, body.method, body.recorded_by)
+        privacy.record_consent(db, client, body.kind, body.granted, policy, body.method, current_user(request).username)
         db.commit()
         return client_out(client, policy)
 
-    # TODO(V1.x): restrict export/anonymize/retention to the admin role once authentication exists.
-
-    @router.get("/api/clients/{client_id}/export")
-    def export_client(client_id: int, db: Session = Depends(get_db)):
+    @router.get("/api/clients/{client_id}/export", dependencies=admin)
+    def export_client(client_id: int, request: Request, db: Session = Depends(get_db)):
         client = get_client(db, client_id)
         data = privacy.export_client(db, client)
+        audit(db, current_user(request).username, "client_export", target=f"client:{client.id}", ip=client_ip(request))
         db.commit()  # the access request itself is logged
         return Response(
             json.dumps(data, ensure_ascii=False, indent=2, default=str),
@@ -138,23 +141,27 @@ def build_router(get_db: Callable, policy: privacy.PrivacyPolicy) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="client-{client.uuid}.json"'},
         )
 
-    @router.post("/api/clients/{client_id}/anonymize", response_model=schemas.ClientOut)
-    def anonymize(client_id: int, body: schemas.AnonymizeIn, db: Session = Depends(get_db)):
+    @router.post("/api/clients/{client_id}/anonymize", response_model=schemas.ClientOut, dependencies=admin)
+    def anonymize(client_id: int, body: schemas.AnonymizeIn, request: Request, db: Session = Depends(get_db)):
         client = get_client(db, client_id)
-        privacy.anonymize_client(db, client, body.reason, body.recorded_by)
+        by = current_user(request).username
+        privacy.anonymize_client(db, client, body.reason, by)
+        audit(db, by, "client_anonymized", target=f"client:{client.id}", ip=client_ip(request))
         db.commit()
         return client_out(client, policy)
 
-    @router.get("/api/privacy/retention", response_model=list[schemas.ClientOut])
+    @router.get("/api/privacy/retention", response_model=list[schemas.ClientOut], dependencies=admin)
     def retention_due(db: Session = Depends(get_db)):
         """Clients past the retention period (no open order): to be anonymized."""
         return [client_out(c, policy) for c in privacy.clients_due_for_anonymization(db, policy)]
 
-    @router.post("/api/privacy/retention/apply")
-    def retention_apply(db: Session = Depends(get_db)) -> dict:
+    @router.post("/api/privacy/retention/apply", dependencies=admin)
+    def retention_apply(request: Request, db: Session = Depends(get_db)) -> dict:
+        by = current_user(request).username
         due = privacy.clients_due_for_anonymization(db, policy)
         for client in due:
-            privacy.anonymize_client(db, client, f"Fin de la période de conservation ({policy.retention_years} ans)")
+            privacy.anonymize_client(db, client, f"Fin de la période de conservation ({policy.retention_years} ans)", by)
+        audit(db, by, "retention_applied", details={"anonymized": len(due)}, ip=client_ip(request))
         db.commit()
         return {"anonymized": len(due)}
 

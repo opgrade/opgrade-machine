@@ -29,7 +29,11 @@ from ..identify.ocr import NumberReader
 from ..identify.recognize import CardRecognizer
 from ..identify.visual import VisualIndex
 from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
+from ..auth import AuthError, audit
+from ..data import User
+from . import auth as auth_api
 from . import customers, schemas
+from .auth import client_ip, current_user, require_admin
 
 
 def create_app(
@@ -59,14 +63,20 @@ def create_app(
         yield
         hardware.close()
 
-    app = FastAPI(title="OpGrade X", version=__version__, lifespan=lifespan)
-    app.state.settings = settings
-    app.state.hardware = hardware
-    app.state.service = service
-
     def get_db() -> Iterator[Session]:
         with session_factory() as db:
             yield db
+
+    # Every /api route requires a login unless listed in auth_api.PUBLIC_PATHS.
+    app = FastAPI(
+        title="OpGrade X", version=__version__, lifespan=lifespan,
+        dependencies=[Depends(auth_api.make_gate(get_db))],
+    )
+    app.state.settings = settings
+    app.state.hardware = hardware
+    app.state.service = service
+    app.state.session_factory = session_factory
+    app.include_router(auth_api.build_router(get_db, settings))
 
     def get_session(db: Session, session_id: int) -> GradingSession:
         gs = db.get(GradingSession, session_id)
@@ -80,6 +90,10 @@ def create_app(
     @app.exception_handler(PrivacyError)
     async def _conflict(_: Request, exc: Exception):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(AuthError)
+    async def _auth_error(_: Request, exc: AuthError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # -- status ---------------------------------------------------------------------------
 
@@ -96,19 +110,22 @@ def create_app(
 
     # -- clients / card types / cards -----------------------------------------------------
 
-    app.include_router(customers.build_router(get_db, policy))
+    app.include_router(customers.build_router(get_db, policy, require_admin))
 
     @app.get("/api/card-types", response_model=list[schemas.CardTypeOut])
     def list_card_types(db: Session = Depends(get_db)):
         return db.scalars(select(CardType).where(CardType.active).order_by(CardType.id)).all()
 
     @app.post("/api/card-types", response_model=schemas.CardTypeOut, status_code=201)
-    def create_card_type(body: schemas.CardTypeIn, db: Session = Depends(get_db)):
-        # TODO(V1.x): restrict to admin role once authentication exists.
+    def create_card_type(body: schemas.CardTypeIn, request: Request, db: Session = Depends(get_db),
+                         admin: User = Depends(require_admin)):
         if db.scalar(select(CardType).where(CardType.code == body.code)):
             raise HTTPException(409, "Ce code de type de carte existe déjà.")
         ct = CardType(**body.model_dump())
         db.add(ct)
+        db.flush()
+        audit(db, admin.username, "card_type_created", target=f"card_type:{ct.id}",
+              details=body.model_dump(), ip=client_ip(request))
         db.commit()
         return ct
 
@@ -196,8 +213,9 @@ def create_app(
         return db.scalars(stmt).all()
 
     @app.post("/api/sessions", response_model=schemas.SessionOut, status_code=201)
-    def start_session(body: schemas.SessionIn, db: Session = Depends(get_db)):
-        return service.start_session(db, body.card_id, body.operator)
+    def start_session(body: schemas.SessionIn, request: Request, db: Session = Depends(get_db)):
+        # The operator is the logged-in account, never a free-text value from the client.
+        return service.start_session(db, body.card_id, current_user(request).username)
 
     @app.get("/api/sessions/{session_id}", response_model=schemas.SessionOut)
     def get_session_route(session_id: int, db: Session = Depends(get_db)):
@@ -216,10 +234,10 @@ def create_app(
         return service.analyze(db, session_id)
 
     @app.post("/api/sessions/{session_id}/review", response_model=schemas.SessionOut)
-    def review(session_id: int, body: schemas.ReviewIn, db: Session = Depends(get_db)):
+    def review(session_id: int, body: schemas.ReviewIn, request: Request, db: Session = Depends(get_db)):
         get_session(db, session_id)
         grades = {"corners": body.corners, "edges": body.edges, "surface": body.surface}
-        return service.submit_review(db, session_id, grades, body.centering_override, body.operator)
+        return service.submit_review(db, session_id, grades, body.centering_override, current_user(request).username)
 
     @app.post("/api/sessions/{session_id}/cancel", response_model=schemas.SessionOut)
     def cancel(session_id: int, db: Session = Depends(get_db)):

@@ -15,6 +15,9 @@ uv pip install --python .venv -e ".[dev]"
 .venv/Scripts/python -m opgrade      # puis ouvrir http://127.0.0.1:8000
 ```
 
+Au premier lancement, l'écran propose de créer le compte **administrateur** (uniquement depuis la
+machine elle-même). Sur un Pi sans écran : `python -m opgrade.auth create-admin --username patron`.
+
 En simulation, un panneau « Simulation » permet de retourner la carte virtuelle ou d'en placer
 une nouvelle avec un centrage aléatoire. Les analyses simulées sont marquées comme telles.
 

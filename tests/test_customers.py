@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
-from helpers import create_client, create_order
+from helpers import create_client, create_order, login
 from opgrade.api import create_app
 from opgrade.config import Settings
 from opgrade.data import Client, ConsentRecord, Order, make_engine
@@ -14,6 +14,7 @@ from opgrade.data import Client, ConsentRecord, Order, make_engine
 def ctx(tmp_path):
     settings = Settings(simulation=True, data_dir=tmp_path)
     with TestClient(create_app(settings)) as api:
+        login(api)
         db = sessionmaker(bind=make_engine(settings), expire_on_commit=False)
         yield api, db
 

@@ -513,3 +513,35 @@ une commande gradée la repasse « En cours ».
   à l'administrateur dès que l'authentification existera (V1.x).
 - La purge de conservation est déclenchée à la main (API) ; prévoir une tâche planifiée.
 - Les sauvegardes futures devront appliquer les anonymisations (ou expirer dans le délai).
+
+---
+
+## 17. Comptes, rôles et sécurité d'accès
+
+| | Opérateur | Administrateur |
+|---|---|---|
+| Clients, consentement, rectification | ✅ | ✅ |
+| Commandes, cartes, identification, gradation | ✅ | ✅ |
+| Export des données d'un client (droit d'accès) | ❌ | ✅ |
+| Anonymisation, conservation (Loi 25) | ❌ | ✅ |
+| Types de cartes (configuration) | ❌ | ✅ |
+| Comptes (créer, rôle, désactiver, réinitialiser) | ❌ | ✅ |
+| Journal de sécurité | ❌ | ✅ |
+
+**Principe** : toute route `/api` exige une connexion (dépendance globale) sauf une liste
+explicite (`/api/status`, `/api/auth/state|login|setup`) ; une route ajoutée plus tard est donc
+protégée par défaut. Les actions sensibles ajoutent la vérification du rôle administrateur.
+
+| Mesure | Détail |
+|---|---|
+| Mots de passe | scrypt (bibliothèque standard, ~16 Mo, sel aléatoire) ; 6 caractères min. opérateur, 10 admin |
+| Sessions | jeton aléatoire en cookie `HttpOnly`, `SameSite=Strict` (+ `Secure` avec `OPGRADE_COOKIE_SECURE=1` en HTTPS) ; seul son SHA‑256 est stocké ; **30 min d'inactivité**, 12 h max |
+| Verrouillage | 5 essais ratés → compte verrouillé 5 min ; message identique pour un identifiant inconnu |
+| Requêtes inter-sites | écriture refusée si l'en-tête `Origin` ne correspond pas à la machine |
+| Premier administrateur | seulement s'il n'existe aucun compte **et** depuis la machine elle-même (écran tactile), ou en terminal : `python -m opgrade.auth create-admin --username …` |
+| Continuité | impossible de rétrograder ou désactiver le dernier administrateur ; récupération par le terminal (`reset-password`) |
+| Traçabilité | l'opérateur d'une gradation et l'auteur d'un consentement = compte connecté (plus de champ libre) ; journal `audit_events` (connexions, échecs, comptes, exports, anonymisations, configuration), sans renseignement personnel client |
+
+**Limites / suite** : pas de HTTPS par défaut (à activer si l'interface est ouverte sur le réseau,
+p. ex. via un proxy) ; pas d'authentification à deux facteurs ; durée de conservation du journal
+de sécurité à définir.

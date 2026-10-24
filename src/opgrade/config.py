@@ -27,6 +27,7 @@ class Settings:
     port: int = 8000
     rules_path: Path = DEFAULT_RULES_PATH
     privacy_path: Path = DEFAULT_PRIVACY_PATH
+    cookie_secure: bool = False  # True when served over HTTPS
     database_url: str = field(default="")
 
     def __post_init__(self) -> None:
@@ -49,4 +50,5 @@ class Settings:
             rules_path=Path(os.environ.get("OPGRADE_RULES_PATH", str(DEFAULT_RULES_PATH))),
             privacy_path=Path(os.environ.get("OPGRADE_PRIVACY_PATH", str(DEFAULT_PRIVACY_PATH))),
             database_url=os.environ.get("OPGRADE_DATABASE_URL", ""),
+            cookie_secure=_env_bool("OPGRADE_COOKIE_SECURE", False),
         )

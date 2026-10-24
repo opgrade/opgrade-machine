@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { status: null, client: null, order: null, session: null, cardTypes: [], notice: null };
+const state = { status: null, user: null, client: null, order: null, session: null, cardTypes: [], notice: null };
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const STATE_LABELS = {
@@ -15,6 +15,12 @@ async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = res.status === 204 ? null : await res.json();
+  if (res.status === 401 && !url.startsWith("/api/auth/")) {
+    // Session expired (inactivity) or closed: back to the login screen.
+    setUser(null);
+    show("login");
+    throw new Error("Session expirée : reconnectez-vous.");
+  }
   if (!res.ok) {
     const detail = data && data.detail;
     if (Array.isArray(detail) && detail[0]) {  // validation error: show the first reason
@@ -25,8 +31,9 @@ async function api(method, url, body) {
   return data;
 }
 
-function toast(msg) {
+function toast(msg, kind = "error") {
   const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  t.classList.toggle("ok", kind === "ok");
   clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.hidden = true), 5000);
 }
 
@@ -35,7 +42,165 @@ function show(name) {
   if (name === "home") { loadHistory(); loadOpenOrders(); }
   if (name === "client") searchClients("");
   if (name === "order-detail" && state.order) refreshOrder();
+  if (name === "admin") loadAdmin().catch((err) => toast(err.message));
 }
+
+// -- Comptes ----------------------------------------------------------------------------
+const ROLE_LABELS = { operator: "Opérateur", admin: "Administrateur" };
+
+function setUser(user) {
+  state.user = user;
+  $("#user-bar").hidden = !user;
+  document.body.classList.toggle("role-admin", user?.role === "admin");
+  document.body.classList.toggle("role-operator", user?.role === "operator");
+  if (!user) return;
+  $("#btn-account").textContent = `${user.display_name || user.username} · ${ROLE_LABELS[user.role]}`;
+  $("#btn-admin").hidden = user.role !== "admin";
+}
+
+async function afterLogin(user) {
+  setUser(user);
+  state.notice = await api("GET", "/api/privacy/notice?lang=fr");
+  renderConsentBlocks();
+  show("home");
+}
+
+async function boot() {
+  await loadStatus();
+  const auth = await api("GET", "/api/auth/state");
+  if (auth.setup_required) return show("setup");
+  if (auth.user) return afterLogin(auth.user);
+  show("login");
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    const user = await api("POST", "/api/auth/login", { username: f.username.value, password: f.password.value });
+    f.reset();
+    await afterLogin(user);
+  } catch (err) { toast(err.message); f.password.value = ""; }
+});
+
+$("#setup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  if (f.password.value !== f.password2.value) { toast("Les deux mots de passe ne correspondent pas."); return; }
+  try {
+    const user = await api("POST", "/api/auth/setup", {
+      username: f.username.value, password: f.password.value, display_name: f.display_name.value || null,
+    });
+    f.reset();
+    await afterLogin(user);
+  } catch (err) { toast(err.message); }
+});
+
+$("#btn-logout").addEventListener("click", async () => {
+  try { await api("POST", "/api/auth/logout"); } catch (err) { /* already logged out */ }
+  state.client = state.order = state.session = null;
+  setUser(null);
+  show("login");
+});
+
+$("#btn-account").addEventListener("click", () => {
+  const u = state.user;
+  $("#account-info").textContent = `${u.username} — ${ROLE_LABELS[u.role]}`;
+  show("account");
+});
+
+$("#password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  if (f.new_password.value !== f.new_password2.value) { toast("Les deux mots de passe ne correspondent pas."); return; }
+  try {
+    await api("POST", "/api/auth/password", { current_password: f.current_password.value, new_password: f.new_password.value });
+    f.reset();
+    toast("Mot de passe changé.", "ok");
+    show("home");
+  } catch (err) { toast(err.message); }
+});
+
+$("#btn-admin").addEventListener("click", () => show("admin"));
+
+// -- Administration ---------------------------------------------------------------------
+const AUDIT_LABELS = {
+  setup: "Configuration initiale", login: "Connexion", login_failed: "Échec de connexion", logout: "Déconnexion",
+  user_created: "Compte créé", user_updated: "Compte modifié", password_reset: "Mot de passe réinitialisé",
+  password_changed: "Mot de passe changé", client_export: "Export de données client",
+  client_anonymized: "Client anonymisé", retention_applied: "Conservation appliquée", card_type_created: "Type de carte ajouté",
+};
+
+async function loadAdmin() {
+  const [users, due, events] = await Promise.all([
+    api("GET", "/api/users"), api("GET", "/api/privacy/retention"), api("GET", "/api/audit?limit=50"),
+  ]);
+  $("#admin-users").innerHTML = users.map((u) => `
+    <tr><td>${esc(u.username)}${u.display_name ? ` <span class="muted">${esc(u.display_name)}</span>` : ""}</td>
+      <td>${ROLE_LABELS[u.role]}</td><td>${u.active ? "Actif" : "Désactivé"}</td>
+      <td><button data-user="${u.id}" data-act="role">${u.role === "admin" ? "→ Opérateur" : "→ Admin"}</button>
+        <button data-user="${u.id}" data-act="active">${u.active ? "Désactiver" : "Réactiver"}</button>
+        <button data-user="${u.id}" data-act="password">Mot de passe</button></td></tr>`).join("");
+  $("#admin-users").users = users;
+  $("#retention-info").textContent = due.length
+    ? `${due.length} dossier(s) client sans activité depuis la durée de conservation : à anonymiser.`
+    : "Aucun dossier client n'a dépassé la durée de conservation.";
+  $("#btn-retention-apply").hidden = !due.length;
+  $("#admin-audit").innerHTML = events.map((ev) => `
+    <tr><td>${new Date(ev.at).toLocaleString("fr-CA")}</td><td>${esc(ev.username)}</td>
+      <td>${esc(AUDIT_LABELS[ev.action] || ev.action)}</td><td>${esc(ev.target)}</td></tr>`).join("");
+}
+
+$("#admin-users").addEventListener("click", (e) => busy(e.target, async () => {
+  const b = e.target.closest("button[data-user]"); if (!b) return;
+  const user = $("#admin-users").users.find((u) => u.id === Number(b.dataset.user));
+  if (b.dataset.act === "role") {
+    await api("PATCH", `/api/users/${user.id}`, { role: user.role === "admin" ? "operator" : "admin" });
+  } else if (b.dataset.act === "active") {
+    await api("PATCH", `/api/users/${user.id}`, { active: !user.active });
+  } else {
+    // Temporary password typed by the admin and handed to the user, who changes it in « Mon compte ».
+    const pw = prompt(`Nouveau mot de passe temporaire pour ${user.username} :`);
+    if (!pw) return;
+    await api("POST", `/api/users/${user.id}/password`, { new_password: pw });
+    toast("Mot de passe réinitialisé : ses sessions ouvertes sont fermées.", "ok");
+  }
+  await loadAdmin();
+}));
+
+$("#user-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("POST", "/api/users", {
+      username: f.username.value, password: f.password.value, role: f.role.value, display_name: f.display_name.value || null,
+    });
+    f.reset();
+    toast("Compte créé.", "ok");
+    await loadAdmin();
+  } catch (err) { toast(err.message); }
+});
+
+$("#card-type-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("POST", "/api/card-types", {
+      code: f.code.value.trim(), name: f.name.value.trim(), category: f.category.value,
+      width_mm: Number(f.width_mm.value), height_mm: Number(f.height_mm.value), catalog: f.catalog.value || null,
+    });
+    f.reset();
+    toast("Type de carte ajouté.", "ok");
+    await loadAdmin();
+  } catch (err) { toast(err.message); }
+});
+
+$("#btn-retention-apply").addEventListener("click", (e) => busy(e.target, async () => {
+  if (!confirm("Anonymiser IRRÉVERSIBLEMENT tous les dossiers échus ?")) return;
+  const r = await api("POST", "/api/privacy/retention/apply");
+  toast(`${r.anonymized} dossier(s) anonymisé(s).`, "ok");
+  await loadAdmin();
+}));
 
 const ORDER_STATUS = {
   received: "Reçue", in_progress: "En cours", graded: "Gradée", returned: "Retournée", cancelled: "Annulée",
@@ -57,8 +222,6 @@ async function loadStatus() {
   pill.textContent = (state.status.simulation ? "SIMULATION · " : "Prête · ") + state.status.machine_id;
   pill.classList.toggle("sim", state.status.simulation);
   $("#privacy-warning").hidden = state.status.privacy_configured;
-  state.notice = await api("GET", "/api/privacy/notice?lang=fr");
-  renderConsentBlocks();
 }
 
 async function loadOpenOrders() {
@@ -261,7 +424,7 @@ $("#btn-anonymize-client").addEventListener("click", (e) => busy(e.target, async
     "les résultats de gradation sont conservés.\n\nMotif (ex. « Demande du client ») :");
   if (!reason) return;
   await api("POST", `/api/clients/${state.order.client_id}/anonymize`, { reason, confirm: true });
-  toast("Client anonymisé.");
+  toast("Client anonymisé.", "ok");
   state.client = null;
   await refreshOrder();
 }));
@@ -471,4 +634,4 @@ $("#btn-next-card").addEventListener("click", async () => {
 });
 
 document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => show(b.dataset.go)));
-loadStatus().then(() => show("home")).catch((err) => toast(err.message));
+boot().catch((err) => toast(err.message));

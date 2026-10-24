@@ -3,13 +3,14 @@ from fastapi.testclient import TestClient
 
 from opgrade.api import create_app
 from opgrade.config import Settings
-from helpers import create_client
+from helpers import create_client, login
 
 
 @pytest.fixture
 def client(tmp_path):
     app = create_app(Settings(simulation=True, data_dir=tmp_path))
     with TestClient(app) as c:
+        login(c)
         yield c
 
 

@@ -1,5 +1,7 @@
 from .db import init_db, make_engine
 from .models import (
+    AuditEvent,
+    AuthSession,
     Base,
     Capture,
     Card,
@@ -10,10 +12,14 @@ from .models import (
     Measurement,
     Order,
     Subgrade,
+    User,
 )
 
 __all__ = [
+    "AuditEvent",
+    "AuthSession",
     "Base",
+    "User",
     "Capture",
     "Card",
     "CardType",

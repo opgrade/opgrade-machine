@@ -66,13 +66,11 @@ class ConsentIn(BaseModel):
     granted: bool
     policy_version: str
     method: ConsentMethod = "touch"
-    recorded_by: str | None = None
 
 
 class AnonymizeIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
     confirm: Literal[True]
-    recorded_by: str | None = None
 
 
 class PrivacyNoticeOut(BaseModel):
@@ -284,3 +282,57 @@ class SimCardIn(BaseModel):
     height_mm: float = 88.0
     rotation_deg: float = Field(1.5, ge=-20, le=20)
     blur: float = Field(0, ge=0, le=10)
+
+
+# -- accounts --------------------------------------------------------------------------------
+
+UserRole = Literal["operator", "admin"]
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=60)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class SetupIn(BaseModel):
+    username: str = Field(min_length=3, max_length=30)
+    password: str = Field(min_length=1, max_length=200)
+    display_name: str | None = Field(default=None, max_length=100)
+
+
+class UserCreateIn(SetupIn):
+    role: UserRole = "operator"
+
+
+class UserUpdateIn(BaseModel):
+    role: UserRole | None = None
+    active: bool | None = None
+    display_name: str | None = Field(default=None, max_length=100)
+
+
+class PasswordResetIn(BaseModel):
+    new_password: str = Field(min_length=1, max_length=200)
+
+
+class PasswordChangeIn(PasswordResetIn):
+    current_password: str = Field(min_length=1, max_length=200)
+
+
+class UserOut(ORM):
+    id: int
+    username: str
+    display_name: str | None
+    role: UserRole
+    active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class AuditOut(ORM):
+    id: int
+    at: datetime
+    username: str | None
+    action: str
+    target: str | None
+    details: dict | None
+    ip: str | None

@@ -196,3 +196,50 @@ class Subgrade(Base):
     source: Mapped[str] = mapped_column(String(20))  # auto | operator | model
     confidence: Mapped[float | None] = mapped_column(Float)
     details: Mapped[dict | None] = mapped_column(JSON)
+
+
+class User(Base):
+    """Machine account. Roles: operator (grading, clients, orders) and admin (everything)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String(30), unique=True)
+    display_name: Mapped[str | None] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(20))  # operator | admin
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuthSession(Base):
+    """Login session. Only a SHA-256 of the cookie token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    ip: Mapped[str | None] = mapped_column(String(64))
+
+    user: Mapped[User] = relationship()
+
+
+class AuditEvent(Base):
+    """Security journal: logins, account changes, sensitive actions. No personal client data."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    username: Mapped[str | None] = mapped_column(String(30))
+    action: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str | None] = mapped_column(String(100))  # e.g. "client:12", "user:3"
+    details: Mapped[dict | None] = mapped_column(JSON)
+    ip: Mapped[str | None] = mapped_column(String(64))

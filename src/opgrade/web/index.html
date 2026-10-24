@@ -9,12 +9,102 @@
 <body>
   <header>
     <div class="brand">OpGrade <b>X</b></div>
-    <div id="machine-status" class="pill">…</div>
+    <div class="header-right">
+      <div id="machine-status" class="pill">…</div>
+      <div id="user-bar" hidden>
+        <button id="btn-account" class="pill user-pill"></button>
+        <button id="btn-admin" class="pill" hidden>Administration</button>
+        <button id="btn-logout" class="pill">Déconnexion</button>
+      </div>
+    </div>
   </header>
 
   <main>
+    <!-- Connexion -->
+    <section id="screen-login" class="screen" hidden>
+      <h1>Connexion</h1>
+      <form id="login-form" class="grid narrow">
+        <input name="username" placeholder="Identifiant" autocomplete="username" autocapitalize="none" required>
+        <input name="password" type="password" placeholder="Mot de passe" autocomplete="current-password" required>
+        <button class="primary huge" type="submit">Se connecter</button>
+      </form>
+      <p class="muted">Mot de passe oublié : demandez à un administrateur de le réinitialiser.</p>
+    </section>
+
+    <!-- Configuration initiale -->
+    <section id="screen-setup" class="screen" hidden>
+      <h1>Configuration initiale</h1>
+      <p>Aucun compte n'existe encore. Créez le compte <b>administrateur</b> de la machine.
+        Il pourra ensuite créer les comptes des opérateurs.</p>
+      <form id="setup-form" class="grid narrow">
+        <input name="username" placeholder="Identifiant (ex. patron)" autocapitalize="none" required>
+        <input name="display_name" placeholder="Nom affiché (facultatif)">
+        <input name="password" type="password" placeholder="Mot de passe (10 caractères minimum)" autocomplete="new-password" required minlength="10">
+        <input name="password2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password" required>
+        <button class="primary huge" type="submit">Créer l'administrateur</button>
+      </form>
+    </section>
+
+    <!-- Mon compte -->
+    <section id="screen-account" class="screen" hidden>
+      <h1>Mon compte</h1>
+      <p id="account-info"></p>
+      <form id="password-form" class="grid narrow">
+        <input name="current_password" type="password" placeholder="Mot de passe actuel" autocomplete="current-password" required>
+        <input name="new_password" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password" required>
+        <input name="new_password2" type="password" placeholder="Confirmer le nouveau mot de passe" autocomplete="new-password" required>
+        <button class="primary" type="submit">Changer mon mot de passe</button>
+      </form>
+      <button data-go="home">Accueil</button>
+    </section>
+
+    <!-- Administration -->
+    <section id="screen-admin" class="screen" hidden>
+      <h1>Administration</h1>
+
+      <h2>Comptes</h2>
+      <table class="history"><thead><tr><th>Identifiant</th><th>Rôle</th><th>État</th><th></th></tr></thead>
+        <tbody id="admin-users"></tbody></table>
+      <details>
+        <summary>Nouveau compte</summary>
+        <form id="user-form" class="grid narrow">
+          <input name="username" placeholder="Identifiant" autocapitalize="none" required>
+          <input name="display_name" placeholder="Nom affiché (facultatif)">
+          <select name="role"><option value="operator">Opérateur</option><option value="admin">Administrateur</option></select>
+          <input name="password" type="password" placeholder="Mot de passe (6 car. opérateur, 10 admin)" autocomplete="new-password" required>
+          <button class="primary" type="submit">Créer le compte</button>
+        </form>
+      </details>
+
+      <h2>Types de cartes</h2>
+      <details>
+        <summary>Nouveau type de carte</summary>
+        <form id="card-type-form" class="grid narrow">
+          <input name="code" placeholder="Code (ex. lorcana)" required>
+          <input name="name" placeholder="Nom affiché (ex. Disney Lorcana)" required>
+          <select name="category"><option value="tcg">Jeu de cartes</option><option value="sport">Sport</option><option value="other">Autre</option></select>
+          <input name="width_mm" type="number" step="0.1" placeholder="Largeur (mm)" required>
+          <input name="height_mm" type="number" step="0.1" placeholder="Hauteur (mm)" required>
+          <select name="catalog">
+            <option value="">Pas de catalogue (saisie manuelle)</option>
+            <option value="tcgdex">TCGdex (Pokémon)</option><option value="scryfall">Scryfall (Magic)</option>
+            <option value="ygoprodeck">YGOPRODeck (Yu-Gi-Oh!)</option>
+          </select>
+          <button class="primary" type="submit">Ajouter le type</button>
+        </form>
+      </details>
+
+      <h2>Conservation des renseignements (Loi 25)</h2>
+      <p id="retention-info" class="muted"></p>
+      <button id="btn-retention-apply" class="danger" hidden>Anonymiser les dossiers échus</button>
+
+      <h2>Journal de sécurité</h2>
+      <table class="history"><thead><tr><th>Date</th><th>Compte</th><th>Action</th><th>Cible</th></tr></thead>
+        <tbody id="admin-audit"></tbody></table>
+      <button data-go="home">Accueil</button>
+    </section>
     <!-- Accueil -->
-    <section id="screen-home" class="screen">
+    <section id="screen-home" class="screen" hidden>
       <div id="privacy-warning" class="warning" hidden>
         Avis de confidentialité incomplet : le responsable de la protection des renseignements
         personnels doit être renseigné (src/opgrade/rules/privacy.yaml) avant la mise en service.
@@ -96,8 +186,9 @@
       <details class="privacy-actions">
         <summary>Client — renseignements personnels (Loi 25)</summary>
         <p class="muted">Demandes d'accès et de suppression. Chaque demande est consignée.</p>
-        <button id="btn-export-client">Exporter ses données (accès)</button>
-        <button id="btn-anonymize-client" class="danger">Anonymiser le client (suppression)</button>
+        <p class="muted operator-only">Réservé à l'administrateur : demandez-lui de traiter la demande du client.</p>
+        <button id="btn-export-client" class="admin-only">Exporter ses données (accès)</button>
+        <button id="btn-anonymize-client" class="danger admin-only">Anonymiser le client (suppression)</button>
       </details>
       <button data-go="home">Accueil</button>
     </section>

@@ -19,3 +19,19 @@ def create_order(api: TestClient, client_id: int, channel: str = "counter", **fi
     response = api.post("/api/orders", json={"client_id": client_id, "channel": channel, **fields})
     assert response.status_code == 201, response.text
     return response.json()
+
+
+TEST_PASSWORD = "mot-de-passe-test-123"
+
+
+def login(api: TestClient, role: str = "admin", username: str | None = None) -> dict:
+    """Create an account directly in the database, then log in through the API (cookie)."""
+    from opgrade.auth import create_user
+
+    username = username or f"test-{role}"
+    with api.app.state.session_factory() as db:
+        create_user(db, username, TEST_PASSWORD, role)
+        db.commit()
+    response = api.post("/api/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
+    return response.json()
