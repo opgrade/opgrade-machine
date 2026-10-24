@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from .. import __version__
 from ..config import PACKAGE_DIR, Settings
-from ..data import Capture, Card, CardType, Client, GradingSession, init_db, make_engine
+from ..customers import OrderError, PrivacyError, load_policy, refresh_status
+from ..customers.orders import check_card_can_join
+from ..data import Capture, Card, CardType, Client, GradingSession, Order, init_db, make_engine
 from ..grading import load_rules
 from ..hardware import Hardware, Side, build_hardware
 from ..hardware.sim import SimCardSpec, SimulatedCamera
@@ -27,7 +29,7 @@ from ..identify.ocr import NumberReader
 from ..identify.recognize import CardRecognizer
 from ..identify.visual import VisualIndex
 from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
-from . import schemas
+from . import customers, schemas
 
 
 def create_app(
@@ -50,6 +52,7 @@ def create_app(
     recognizer = CardRecognizer(visual_index, number_reader or NumberReader(), get_catalog)
     session_factory = init_db(make_engine(settings))
     service = GradingService(settings, hardware, load_rules(settings.rules_path))
+    policy = load_policy(settings.privacy_path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -73,6 +76,8 @@ def create_app(
 
     @app.exception_handler(WorkflowError)
     @app.exception_handler(InvalidTransition)
+    @app.exception_handler(OrderError)
+    @app.exception_handler(PrivacyError)
     async def _conflict(_: Request, exc: Exception):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
@@ -85,24 +90,13 @@ def create_app(
             "machine_id": settings.machine_id,
             "simulation": hardware.simulated,
             "rules_version": service.rules.version,
+            "privacy_version": policy.version,
+            "privacy_configured": policy.is_configured,
         }
 
     # -- clients / card types / cards -----------------------------------------------------
 
-    @app.get("/api/clients", response_model=list[schemas.ClientOut])
-    def list_clients(q: str | None = None, db: Session = Depends(get_db)):
-        stmt = select(Client).order_by(Client.last_name, Client.first_name)
-        if q:
-            like = f"%{q}%"
-            stmt = stmt.where(Client.first_name.ilike(like) | Client.last_name.ilike(like) | Client.email.ilike(like))
-        return db.scalars(stmt).all()
-
-    @app.post("/api/clients", response_model=schemas.ClientOut, status_code=201)
-    def create_client(body: schemas.ClientIn, db: Session = Depends(get_db)):
-        client = Client(**body.model_dump())
-        db.add(client)
-        db.commit()
-        return client
+    app.include_router(customers.build_router(get_db, policy))
 
     @app.get("/api/card-types", response_model=list[schemas.CardTypeOut])
     def list_card_types(db: Session = Depends(get_db)):
@@ -174,12 +168,23 @@ def create_app(
 
     @app.post("/api/cards", response_model=schemas.CardOut, status_code=201)
     def create_card(body: schemas.CardIn, db: Session = Depends(get_db)):
-        if db.get(Client, body.client_id) is None:
+        client = db.get(Client, body.client_id)
+        if client is None:
             raise HTTPException(404, "Client introuvable.")
+        if client.anonymized_at:
+            raise HTTPException(409, "Ce client a été anonymisé.")
         if db.get(CardType, body.card_type_id) is None:
             raise HTTPException(404, "Type de carte introuvable.")
+        order = None
+        if body.order_id is not None:
+            order = db.get(Order, body.order_id)
+            if order is None:
+                raise HTTPException(404, "Commande introuvable.")
+            check_card_can_join(order, client.id)
         card = Card(**body.model_dump())
         db.add(card)
+        db.flush()
+        refresh_status(order)  # a graded order receiving a new card is in progress again
         db.commit()
         return card
 

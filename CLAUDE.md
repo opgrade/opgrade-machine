@@ -41,6 +41,7 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
 | `vision/` | Détection/redressement de la carte, contrôle qualité image, centrage, détection de retournement |
 | `grading/` | Règles versionnées (`src/opgrade/rules/grading_rules.yaml`) et moteur de calcul de la note |
 | `identify/` | Identification : recherche texte en ligne (`catalogs.py` : TCGdex, Scryfall, YGOPRODeck, Pokémon TCG API) et **reconnaissance par image** hors ligne (`visual.py` : empreintes pHash + index `data/card_index.db` ; `build_index.py` le construit depuis `sources.py`), **numéro imprimé lu par OCR** (`ocr.py`, RapidOCR) pour départager les réimpressions ; `recognize.py` enchaîne les deux. Catalogue choisi par `CardType.catalog`. Les cartes Pokémon TCG Pocket (numériques) sont exclues |
+| `customers/` | Commandes/lots (`orders.py` : statuts reçue → en cours → gradée → retournée) et Loi 25 (`privacy.py` : consentement versionné, export, anonymisation, conservation ; avis dans `rules/privacy.yaml`) |
 | `data/` | Modèles SQLAlchemy, session DB, données de base (types de cartes), mini-migration (ajout de colonnes) |
 | `api/` | Application FastAPI et routes |
 | `web/` | Interface tactile (statique) |
@@ -72,6 +73,9 @@ Variables d'environnement (préfixe `OPGRADE_`) : `OPGRADE_SIMULATION` (1/0),
    matériel réel quand elle touche la capture.
 7. Ne jamais sacrifier la sécurité des cartes à la vitesse (mécanique V2).
 8. Tables : clé `id` entière + `uuid` (pour la future synchro PostgreSQL sans doublon).
+9. **Loi 25** : ne collecter aucun nouveau renseignement personnel sans l'ajouter à l'avis
+   (`rules/privacy.yaml`, nouvelle `version`), à l'export (`export_client`) et à l'anonymisation
+   (`anonymize_client`). Aucun renseignement personnel dans `consent_records` ni dans les logs.
 
 ## État actuel (V1 — phase 0)
 

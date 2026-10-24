@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from opgrade.api import create_app
 from opgrade.config import Settings
+from helpers import create_client
 
 
 @pytest.fixture
@@ -13,7 +14,7 @@ def client(tmp_path):
 
 
 def _new_session(client: TestClient) -> int:
-    cust = client.post("/api/clients", json={"first_name": "Marie", "last_name": "Tremblay"}).json()
+    cust = create_client(client)
     pokemon = next(t for t in client.get("/api/card-types").json() if t["code"] == "pokemon")
     card = client.post(
         "/api/cards", json={"client_id": cust["id"], "card_type_id": pokemon["id"], "name": "Pikachu", "year": 1999}

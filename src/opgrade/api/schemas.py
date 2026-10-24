@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CatalogId = Literal["tcgdex", "pokemontcg", "scryfall", "ygoprodeck"]  # keep in sync with identify.CATALOGS
 
@@ -12,18 +12,127 @@ class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ClientIn(BaseModel):
-    first_name: str = Field(min_length=1)
-    last_name: str = Field(min_length=1)
-    email: str | None = None
-    phone: str | None = None
+ConsentMethod = Literal["touch", "paper", "verbal", "email"]
+
+
+class ClientFields(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=50)
     notes: str | None = None
 
 
-class ClientOut(ORM, ClientIn):
+class ClientIn(ClientFields):
+    """New client. Loi 25: one contact is enough, and service consent is mandatory."""
+
+    consent_service: bool
+    consent_policy_version: str  # version of the notice shown to the client
+    consent_marketing: bool = False
+    consent_method: ConsentMethod = "touch"
+
+    @model_validator(mode="after")
+    def _check(self) -> "ClientIn":
+        if not (self.email or self.phone):
+            raise ValueError("Un moyen de contact est requis : courriel ou téléphone.")
+        if not self.consent_service:
+            raise ValueError("Le consentement du client est obligatoire pour ouvrir un dossier.")
+        return self
+
+
+class ClientUpdate(BaseModel):
+    """Rectification request: only the fields sent are changed."""
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    email: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=50)
+    notes: str | None = None
+
+
+class ClientOut(ORM, ClientFields):
     id: int
     uuid: str
     created_at: datetime
+    consent_service_at: datetime | None
+    consent_policy_version: str | None
+    consent_marketing: bool | None
+    anonymized_at: datetime | None
+    consent_valid: bool = False  # consent given for the current notice version
+
+
+class ConsentIn(BaseModel):
+    kind: Literal["service", "marketing"]
+    granted: bool
+    policy_version: str
+    method: ConsentMethod = "touch"
+    recorded_by: str | None = None
+
+
+class AnonymizeIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    confirm: Literal[True]
+    recorded_by: str | None = None
+
+
+class PrivacyNoticeOut(BaseModel):
+    version: str
+    lang: str
+    notice: str
+    consent_service: str
+    consent_marketing: str
+    retention_years: int
+    responsible_configured: bool
+
+
+OrderChannel = Literal["counter", "store", "mail"]
+OrderStatus = Literal["received", "in_progress", "graded", "returned", "cancelled"]
+
+
+class OrderIn(BaseModel):
+    client_id: int
+    channel: OrderChannel
+    notes: str | None = None
+    tracking_in: str | None = Field(default=None, max_length=100)
+    return_address: str | None = Field(default=None, max_length=500)
+
+
+class OrderOut(ORM):
+    id: int
+    uuid: str
+    number: str
+    client_id: int
+    client_name: str
+    channel: OrderChannel
+    status: OrderStatus
+    notes: str | None
+    tracking_in: str | None
+    tracking_out: str | None
+    return_address: str | None
+    created_at: datetime
+    graded_at: datetime | None
+    returned_at: datetime | None
+    cards_count: int
+    graded_count: int
+
+
+class OrderCardOut(BaseModel):
+    id: int
+    name: str
+    set_name: str | None
+    card_number: str | None
+    card_type: str
+    session_id: int | None  # latest grading session
+    session_state: str | None
+    final_grade: int | None
+
+
+class OrderDetailOut(OrderOut):
+    cards: list[OrderCardOut]
+
+
+class ReturnIn(BaseModel):
+    tracking_out: str | None = Field(default=None, max_length=100)
 
 
 class CardTypeIn(BaseModel):
@@ -44,6 +153,7 @@ class CardTypeOut(ORM, CardTypeIn):
 
 class CardIn(BaseModel):
     client_id: int
+    order_id: int | None = None
     card_type_id: int
     name: str = Field(min_length=1)
     set_name: str | None = None

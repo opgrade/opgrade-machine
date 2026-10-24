@@ -10,6 +10,7 @@ import cv2
 from sqlalchemy.orm import Session
 
 from ..config import Settings
+from ..customers.orders import refresh_status
 from ..data.models import Capture, Card, CardType, GradingSession, Measurement, Subgrade
 from ..grading import GradingRules, centering_grade, compute_final_grade
 from ..hardware.base import Hardware, LightingMode, Side
@@ -104,10 +105,13 @@ class GradingService:
     # -- workflow --------------------------------------------------------------------------
 
     def start_session(self, db: Session, card_id: int, operator: str | None = None) -> GradingSession:
-        if db.get(Card, card_id) is None:
+        card = db.get(Card, card_id)
+        if card is None:
             raise WorkflowError("Carte introuvable.")
+        if card.order is not None and card.order.status in ("returned", "cancelled"):
+            raise WorkflowError("La commande de cette carte est retournée ou annulée.")
         gs = GradingSession(
-            card_id=card_id,
+            card=card,
             machine_id=self.settings.machine_id,
             state=SessionState.AWAIT_FRONT.value,
             simulated=self.hardware.simulated,
@@ -117,6 +121,7 @@ class GradingService:
             last_message=INSTRUCTIONS[SessionState.AWAIT_FRONT],
         )
         db.add(gs)
+        refresh_status(card.order)
         db.commit()
         return gs
 
@@ -233,11 +238,13 @@ class GradingService:
             gs.operator = operator
         gs.completed_at = datetime.now(timezone.utc)
         self._move(gs, SessionState.COMPLETED, f"Note finale : {final.grade}/10. {INSTRUCTIONS[SessionState.COMPLETED]}")
+        refresh_status(gs.card.order)
         db.commit()
         return gs
 
     def cancel(self, db: Session, session_id: int) -> GradingSession:
         gs = self._get(db, session_id)
         self._move(gs, SessionState.CANCELLED)
+        refresh_status(gs.card.order)
         db.commit()
         return gs

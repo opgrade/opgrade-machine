@@ -32,8 +32,56 @@ class Client(Base):
     phone: Mapped[str | None] = mapped_column(String(50))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Loi 25: current consent state. The full history is in consent_records.
+    consent_service_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consent_policy_version: Mapped[str | None] = mapped_column(String(30))
+    consent_marketing: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     cards: Mapped[list["Card"]] = relationship(back_populates="client")
+    orders: Mapped[list["Order"]] = relationship(back_populates="client")
+
+
+class ConsentRecord(Base):
+    """Append-only register of consent decisions and privacy requests (Loi 25).
+
+    Holds no personal data itself, so it survives anonymization as proof of what was done.
+    """
+
+    __tablename__ = "consent_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    kind: Mapped[str] = mapped_column(String(20))  # service | marketing | access | anonymization
+    granted: Mapped[bool | None] = mapped_column(Boolean)
+    policy_version: Mapped[str | None] = mapped_column(String(30))
+    method: Mapped[str | None] = mapped_column(String(20))  # touch | paper | verbal | email
+    recorded_by: Mapped[str | None] = mapped_column(String(100))
+    reason: Mapped[str | None] = mapped_column(Text)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Order(Base):
+    """A batch of cards handed in by one client (counter, store or mail)."""
+
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, default=_uuid)
+    number: Mapped[str | None] = mapped_column(String(30), unique=True)  # "OPG-2026-000042"
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    channel: Mapped[str] = mapped_column(String(20))  # counter | store | mail
+    status: Mapped[str] = mapped_column(String(20), default="received")
+    notes: Mapped[str | None] = mapped_column(Text)
+    tracking_in: Mapped[str | None] = mapped_column(String(100))
+    tracking_out: Mapped[str | None] = mapped_column(String(100))
+    return_address: Mapped[str | None] = mapped_column(Text)  # personal data: cleared on anonymization
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    graded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    client: Mapped[Client] = relationship(back_populates="orders")
+    cards: Mapped[list["Card"]] = relationship(back_populates="order")
 
 
 class CardType(Base):
@@ -61,6 +109,7 @@ class Card(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uuid: Mapped[str] = mapped_column(String(36), unique=True, default=_uuid)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"))
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"))
     card_type_id: Mapped[int] = mapped_column(ForeignKey("card_types.id"))
     name: Mapped[str] = mapped_column(String(200))
     set_name: Mapped[str | None] = mapped_column(String(200))
@@ -76,6 +125,7 @@ class Card(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     client: Mapped[Client] = relationship(back_populates="cards")
+    order: Mapped["Order | None"] = relationship(back_populates="cards")
     card_type: Mapped[CardType] = relationship()
     sessions: Mapped[list["GradingSession"]] = relationship(back_populates="card")
 

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from opgrade.api import create_app
+from helpers import create_client
 from opgrade.config import Settings
 from opgrade.identify import (
     CardQuery,
@@ -229,7 +230,7 @@ def test_identify_then_create_card_with_reference(api):
     assert r["available"] and r["candidates"][0]["external_id"] == "en:base1-4"
 
     c = r["candidates"][0]
-    client_id = api.post("/api/clients", json={"first_name": "A", "last_name": "B"}).json()["id"]
+    client_id = create_client(api)["id"]
     card = api.post("/api/cards", json={
         "client_id": client_id, "card_type_id": _type_id(api, "pokemon"), "name": c["name"],
         "set_name": c["set_name"], "card_number": c["number"], "year": c["year"], "rarity": c["rarity"],
@@ -249,6 +250,6 @@ def test_identify_offline_falls_back_to_manual(api):
 
 
 def test_card_rejects_unknown_catalog(api):
-    client_id = api.post("/api/clients", json={"first_name": "A", "last_name": "B"}).json()["id"]
+    client_id = create_client(api)["id"]
     r = api.post("/api/cards", json={"client_id": client_id, "card_type_id": 1, "name": "X", "external_source": "evil"})
     assert r.status_code == 422

@@ -1,0 +1,36 @@
+# Avis de confidentialité et règles de conservation (Loi 25, Québec).
+# Toute modification du texte ou des finalités DOIT incrémenter `version` : le consentement
+# enregistré porte la version acceptée par le client.
+# ⚠ À faire valider par un juriste avant la mise en service.
+version: "2026-10-1"
+
+# Responsable de la protection des renseignements personnels (obligatoire, à publier).
+# Par défaut la personne ayant la plus haute autorité dans l'entreprise.
+responsible:
+  name: "À COMPLÉTER — responsable de la protection des renseignements personnels"
+  contact: "À COMPLÉTER — courriel ou adresse"
+
+# Conservation après la dernière activité du client (commande ou carte), puis anonymisation.
+retention_years: 3
+
+notice:
+  fr: |
+    OpGrade recueille votre nom, un moyen de vous joindre (courriel ou téléphone) et, pour un envoi postal, votre adresse de retour.
+    Ces renseignements servent uniquement à : traiter votre commande de gradation, vous joindre à son sujet, vous retourner vos cartes et émettre vos certificats.
+    Ils sont conservés sur la machine OpGrade, ne sont ni vendus ni loués, et ne sont communiqués qu'au transporteur pour un retour postal.
+    Ils sont conservés {retention_years} ans après votre dernière commande, puis anonymisés. Les résultats de gradation, sans renseignements personnels, sont conservés pour la vérification des certificats.
+    Vous pouvez en tout temps demander à accéder à vos renseignements, à les faire corriger ou supprimer, ou retirer votre consentement, auprès de : {responsible_name} ({responsible_contact}).
+  en: |
+    OpGrade collects your name, one way to reach you (email or phone) and, for mail-in orders, your return address.
+    This information is used only to process your grading order, contact you about it, return your cards and issue your certificates.
+    It is stored on the OpGrade machine, is never sold or rented, and is shared only with the carrier for mail returns.
+    It is kept for {retention_years} years after your last order, then anonymized. Grading results, without personal information, are kept so certificates can be verified.
+    You may at any time ask to access, correct or delete your information, or withdraw your consent, by contacting: {responsible_name} ({responsible_contact}).
+
+consent:
+  service:
+    fr: "Le client a pris connaissance de l'avis et consent à l'utilisation de ses renseignements pour le traitement de sa commande."
+    en: "The client has read the notice and consents to the use of their information to process the order."
+  marketing:
+    fr: "Facultatif : le client accepte de recevoir des nouvelles et offres d'OpGrade."
+    en: "Optional: the client agrees to receive news and offers from OpGrade."

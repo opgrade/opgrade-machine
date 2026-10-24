@@ -8,6 +8,7 @@ from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_RULES_PATH = PACKAGE_DIR / "rules" / "grading_rules.yaml"
+DEFAULT_PRIVACY_PATH = PACKAGE_DIR / "rules" / "privacy.yaml"
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -25,6 +26,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8000
     rules_path: Path = DEFAULT_RULES_PATH
+    privacy_path: Path = DEFAULT_PRIVACY_PATH
     database_url: str = field(default="")
 
     def __post_init__(self) -> None:
@@ -45,5 +47,6 @@ class Settings:
             host=os.environ.get("OPGRADE_HOST", "127.0.0.1"),
             port=int(os.environ.get("OPGRADE_PORT", "8000")),
             rules_path=Path(os.environ.get("OPGRADE_RULES_PATH", str(DEFAULT_RULES_PATH))),
+            privacy_path=Path(os.environ.get("OPGRADE_PRIVACY_PATH", str(DEFAULT_PRIVACY_PATH))),
             database_url=os.environ.get("OPGRADE_DATABASE_URL", ""),
         )

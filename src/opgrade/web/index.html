@@ -15,7 +15,13 @@
   <main>
     <!-- Accueil -->
     <section id="screen-home" class="screen">
-      <button class="primary huge" data-go="client">Nouvelle gradation</button>
+      <div id="privacy-warning" class="warning" hidden>
+        Avis de confidentialité incomplet : le responsable de la protection des renseignements
+        personnels doit être renseigné (src/opgrade/rules/privacy.yaml) avant la mise en service.
+      </div>
+      <button class="primary huge" data-go="client">Nouvelle commande</button>
+      <h2>Commandes en cours</h2>
+      <ul id="open-orders" class="choices"></ul>
       <h2>Dernières analyses</h2>
       <table class="history"><thead><tr><th>#</th><th>Carte</th><th>État</th><th>Note</th><th></th></tr></thead>
         <tbody id="history"></tbody></table>
@@ -33,16 +39,73 @@
           <input name="last_name" placeholder="Nom" required>
           <input name="email" type="email" placeholder="Courriel">
           <input name="phone" placeholder="Téléphone">
+          <p class="muted">Un seul moyen de contact suffit (courriel ou téléphone).</p>
+          <div class="consent-block"></div>
           <button class="primary" type="submit">Créer le client</button>
         </form>
       </details>
       <button data-go="home">Annuler</button>
     </section>
 
+    <!-- Consentement à renouveler -->
+    <section id="screen-consent" class="screen" hidden>
+      <h1>Consentement</h1>
+      <p>Le consentement de <b class="client-name"></b> doit être recueilli pour la version
+        actuelle de l'avis de confidentialité.</p>
+      <form id="consent-form" class="grid">
+        <div class="consent-block"></div>
+        <button class="primary" type="submit">Enregistrer le consentement</button>
+      </form>
+      <button data-go="client">Retour</button>
+    </section>
+
+    <!-- Commande -->
+    <section id="screen-order" class="screen" hidden>
+      <h1>2. Commande</h1>
+      <p>Client : <b class="client-name"></b></p>
+      <h2>Commandes en cours de ce client</h2>
+      <ul id="client-orders" class="choices"></ul>
+      <details id="new-order" open>
+        <summary>Nouvelle commande</summary>
+        <form id="order-form" class="grid">
+          <select name="channel" required>
+            <option value="counter">Comptoir</option>
+            <option value="store">Boutique / revendeur</option>
+            <option value="mail">Envoi postal</option>
+          </select>
+          <input name="tracking_in" placeholder="N° de suivi à la réception (envoi postal)" hidden>
+          <textarea name="return_address" rows="3" placeholder="Adresse de retour (obligatoire pour un envoi postal)" hidden></textarea>
+          <textarea name="notes" rows="2" placeholder="Notes (facultatif)"></textarea>
+          <button class="primary" type="submit">Créer la commande</button>
+        </form>
+      </details>
+      <button data-go="client">Retour</button>
+    </section>
+
+    <!-- Détail de commande -->
+    <section id="screen-order-detail" class="screen" hidden>
+      <h1>Commande <span id="order-number"></span></h1>
+      <div id="order-summary" class="card-info"></div>
+      <table class="history"><thead><tr><th>Carte</th><th>État</th><th>Note</th><th></th></tr></thead>
+        <tbody id="order-cards"></tbody></table>
+      <div class="actions">
+        <button id="btn-add-card" class="primary huge">Ajouter une carte</button>
+        <button id="btn-return-order" class="primary">Marquer comme retournée au client</button>
+        <button id="btn-cancel-order" class="danger">Annuler la commande</button>
+      </div>
+      <details class="privacy-actions">
+        <summary>Client — renseignements personnels (Loi 25)</summary>
+        <p class="muted">Demandes d'accès et de suppression. Chaque demande est consignée.</p>
+        <button id="btn-export-client">Exporter ses données (accès)</button>
+        <button id="btn-anonymize-client" class="danger">Anonymiser le client (suppression)</button>
+      </details>
+      <button data-go="home">Accueil</button>
+    </section>
+
     <!-- Carte -->
     <section id="screen-card" class="screen" hidden>
-      <h1>2. Carte</h1>
-      <p>Client : <b id="card-client"></b></p>
+      <h1>3. Carte</h1>
+      <p>Client : <b class="client-name"></b> · Commande <b id="card-order"></b></p>
       <form id="card-form" class="grid">
         <select name="card_type_id" id="card-type" required></select>
         <input name="name" placeholder="Nom de la carte (ex. Pikachu)" required>
@@ -70,12 +133,12 @@
         <ul id="candidates" class="candidates"></ul>
         <button class="primary" type="submit">Commencer la capture</button>
       </form>
-      <button data-go="client">Retour</button>
+      <button data-go="order-detail">Retour à la commande</button>
     </section>
 
     <!-- Capture -->
     <section id="screen-capture" class="screen" hidden>
-      <h1>3. Capture</h1>
+      <h1>4. Capture</h1>
       <div id="instruction" class="instruction"></div>
       <div class="previews">
         <figure><img id="img-front" alt=""><figcaption>Recto</figcaption></figure>
@@ -95,7 +158,7 @@
 
     <!-- Révision -->
     <section id="screen-review" class="screen" hidden>
-      <h1>4. Révision</h1>
+      <h1>5. Révision</h1>
       <div id="review-instruction" class="instruction"></div>
       <div id="centering-info" class="card-info"></div>
       <form id="review-form" class="grades">
@@ -115,7 +178,11 @@
       <table id="subgrades" class="subgrades"></table>
       <ul id="explanation"></ul>
       <p class="muted">Note propre à OpGrade ; ne constitue pas une prédiction de note PSA, BGS ou CGC.</p>
-      <button class="primary huge" data-go="home">Terminer</button>
+      <div id="result-order-actions" hidden>
+        <button id="btn-next-card" class="primary huge">Carte suivante de la commande</button>
+        <button data-go="order-detail">Retour à la commande</button>
+      </div>
+      <button id="btn-result-home" class="primary huge" data-go="home">Terminer</button>
     </section>
   </main>
 

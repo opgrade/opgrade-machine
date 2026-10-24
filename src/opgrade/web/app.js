@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { status: null, client: null, session: null, cardTypes: [] };
+const state = { status: null, client: null, order: null, session: null, cardTypes: [], notice: null };
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const STATE_LABELS = {
@@ -17,6 +17,9 @@ async function api(method, url, body) {
   const data = res.status === 204 ? null : await res.json();
   if (!res.ok) {
     const detail = data && data.detail;
+    if (Array.isArray(detail) && detail[0]) {  // validation error: show the first reason
+      throw new Error(String(detail[0].msg || "").replace(/^Value error, /, ""));
+    }
     throw new Error(typeof detail === "string" ? detail : "Requête refusée (" + res.status + ")");
   }
   return data;
@@ -29,9 +32,18 @@ function toast(msg) {
 
 function show(name) {
   document.querySelectorAll(".screen").forEach((s) => (s.hidden = s.id !== "screen-" + name));
-  if (name === "home") loadHistory();
+  if (name === "home") { loadHistory(); loadOpenOrders(); }
   if (name === "client") searchClients("");
+  if (name === "order-detail" && state.order) refreshOrder();
 }
+
+const ORDER_STATUS = {
+  received: "Reçue", in_progress: "En cours", graded: "Gradée", returned: "Retournée", cancelled: "Annulée",
+};
+const CHANNELS = { counter: "Comptoir", store: "Boutique", mail: "Envoi postal" };
+const clientName = (c) => `${c.first_name} ${c.last_name}`;
+const orderLine = (o) =>
+  `<b>${esc(o.number)}</b> · ${esc(o.client_name)} · ${CHANNELS[o.channel]} · ${ORDER_STATUS[o.status]} · ${o.graded_count}/${o.cards_count} gradée(s)`;
 
 function gradeOptions(select, allowEmpty) {
   select.innerHTML = allowEmpty ? '<option value="">(mesure automatique)</option>' : '<option value="">—</option>';
@@ -44,7 +56,61 @@ async function loadStatus() {
   const pill = $("#machine-status");
   pill.textContent = (state.status.simulation ? "SIMULATION · " : "Prête · ") + state.status.machine_id;
   pill.classList.toggle("sim", state.status.simulation);
+  $("#privacy-warning").hidden = state.status.privacy_configured;
+  state.notice = await api("GET", "/api/privacy/notice?lang=fr");
+  renderConsentBlocks();
 }
+
+async function loadOpenOrders() {
+  const orders = await api("GET", "/api/orders?status=open");
+  $("#open-orders").innerHTML = orders.length
+    ? orders.map((o) => `<li data-id="${o.id}">${orderLine(o)}</li>`).join("")
+    : '<li class="muted">Aucune commande en cours.</li>';
+}
+
+$("#open-orders").addEventListener("click", async (e) => {
+  const li = e.target.closest("li[data-id]"); if (!li) return;
+  openOrder(await api("GET", "/api/orders/" + li.dataset.id));
+});
+
+// -- Consentement (Loi 25) --------------------------------------------------------------
+function renderConsentBlocks() {
+  const n = state.notice;
+  document.querySelectorAll(".consent-block").forEach((block) => {
+    block.innerHTML = `
+      <div class="notice"><b>Avis de confidentialité</b> <span class="muted">(version ${esc(n.version)})</span>
+        <p>${esc(n.notice).replace(/\n/g, "<br>")}</p></div>
+      <label class="check"><input type="checkbox" name="consent_service" required> ${esc(n.consent_service)}</label>
+      <label class="check"><input type="checkbox" name="consent_marketing"> ${esc(n.consent_marketing)}</label>
+      <label>Consentement recueilli
+        <select name="consent_method">
+          <option value="touch">à l'écran</option><option value="paper">sur papier signé</option>
+          <option value="verbal">verbalement</option><option value="email">par courriel</option>
+        </select></label>`;
+  });
+}
+
+function consentFields(form) {
+  return {
+    consent_service: form.consent_service.checked,
+    consent_marketing: form.consent_marketing.checked,
+    consent_method: form.consent_method.value,
+    consent_policy_version: state.notice.version,
+  };
+}
+
+$("#consent-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = consentFields(e.target);
+  const base = { policy_version: f.consent_policy_version, method: f.consent_method };
+  try {
+    await api("POST", `/api/clients/${state.client.id}/consent`, { ...base, kind: "service", granted: true });
+    const client = await api("POST", `/api/clients/${state.client.id}/consent`,
+      { ...base, kind: "marketing", granted: f.consent_marketing });
+    e.target.reset();
+    selectClient(client);
+  } catch (err) { toast(err.message); }
+});
 
 async function loadHistory() {
   const sessions = await api("GET", "/api/sessions?limit=20");
@@ -73,20 +139,144 @@ $("#client-list").addEventListener("click", (e) => {
 });
 $("#client-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target)); for (const k in body) if (!body[k]) body[k] = null;
-  try { selectClient(await api("POST", "/api/clients", body)); e.target.reset(); } catch (err) { toast(err.message); }
+  const f = e.target;
+  const body = {};
+  for (const k of ["first_name", "last_name", "email", "phone"]) body[k] = f[k].value.trim() || null;
+  if (!body.email && !body.phone) { toast("Un moyen de contact est requis : courriel ou téléphone."); return; }
+  Object.assign(body, consentFields(f));
+  try { selectClient(await api("POST", "/api/clients", body)); f.reset(); } catch (err) { toast(err.message); }
 });
 
-async function selectClient(client) {
+function selectClient(client) {
   state.client = client;
-  $("#card-client").textContent = client.first_name + " " + client.last_name;
+  document.querySelectorAll(".client-name").forEach((el) => (el.textContent = clientName(client)));
+  if (!client.consent_valid) return show("consent");
+  openOrderScreen();
+}
+
+// -- Commande ---------------------------------------------------------------------------
+const orderForm = $("#order-form");
+
+function toggleMailFields() {
+  const mail = orderForm.channel.value === "mail";
+  orderForm.tracking_in.hidden = orderForm.return_address.hidden = !mail;
+  orderForm.return_address.required = mail;
+}
+orderForm.channel.addEventListener("change", toggleMailFields);
+
+async function openOrderScreen() {
+  const orders = await api("GET", `/api/orders?status=open&client_id=${state.client.id}`);
+  $("#client-orders").innerHTML = orders.length
+    ? orders.map((o) => `<li data-id="${o.id}">${orderLine(o)}</li>`).join("")
+    : '<li class="muted">Aucune commande en cours.</li>';
+  orderForm.reset(); toggleMailFields();
+  show("order");
+}
+
+$("#client-orders").addEventListener("click", async (e) => {
+  const li = e.target.closest("li[data-id]"); if (!li) return;
+  openOrder(await api("GET", "/api/orders/" + li.dataset.id));
+});
+
+orderForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { client_id: state.client.id, channel: orderForm.channel.value };
+  for (const k of ["tracking_in", "return_address", "notes"]) body[k] = orderForm[k].value.trim() || null;
+  try { openOrder(await api("POST", "/api/orders", body)); } catch (err) { toast(err.message); }
+});
+
+async function openOrder(order) {
+  state.order = order;
+  if (!state.client || state.client.id !== order.client_id) {
+    state.client = await api("GET", "/api/clients/" + order.client_id);
+  }
+  document.querySelectorAll(".client-name").forEach((el) => (el.textContent = clientName(state.client)));
+  renderOrder();
+  show("order-detail");
+}
+
+async function refreshOrder() {
+  state.order = await api("GET", "/api/orders/" + state.order.id);
+  renderOrder();
+}
+
+function renderOrder() {
+  const o = state.order;
+  const open = ["received", "in_progress", "graded"].includes(o.status);
+  $("#order-number").textContent = o.number;
+  $("#order-summary").innerHTML = `
+    Client : <b>${esc(o.client_name)}</b> · ${CHANNELS[o.channel]} · <b>${ORDER_STATUS[o.status]}</b>
+    · ${o.graded_count}/${o.cards_count} carte(s) gradée(s)
+    ${o.tracking_in ? `<br>Suivi réception : ${esc(o.tracking_in)}` : ""}
+    ${o.tracking_out ? `<br>Suivi retour : ${esc(o.tracking_out)}` : ""}
+    ${o.return_address ? `<br>Adresse de retour : ${esc(o.return_address)}` : ""}
+    ${o.notes ? `<br>Notes : ${esc(o.notes)}` : ""}`;
+  $("#order-cards").innerHTML = o.cards.length ? o.cards.map((c) => `
+    <tr><td>${esc(c.name)}${c.set_name ? ` <span class="muted">${esc(c.set_name)} ${esc(c.card_number)}</span>` : ""}</td>
+      <td>${c.session_state ? STATE_LABELS[c.session_state] : "À grader"}</td>
+      <td>${c.final_grade ?? "—"}</td>
+      <td>${open ? `<button data-card="${c.id}" data-session="${c.session_id ?? ""}" data-state="${c.session_state ?? ""}">
+        ${c.session_state === "completed" ? "Voir" : c.session_state && c.session_state !== "cancelled" ? "Continuer" : "Grader"}</button>` : ""}</td></tr>`).join("")
+    : '<tr><td colspan="4" class="muted">Aucune carte pour l\'instant.</td></tr>';
+  $("#btn-add-card").hidden = !open;
+  $("#btn-cancel-order").hidden = !open;
+  $("#btn-return-order").hidden = o.status !== "graded";
+}
+
+$("#order-cards").addEventListener("click", (e) => busy(e.target, async () => {
+  const b = e.target.closest("button[data-card]"); if (!b) return;
+  if (b.dataset.session && b.dataset.state !== "cancelled") {
+    openSession(await api("GET", "/api/sessions/" + b.dataset.session));
+  } else {
+    openSession(await api("POST", "/api/sessions", { card_id: Number(b.dataset.card) }));
+  }
+}));
+
+$("#btn-add-card").addEventListener("click", () => prepareCardScreen());
+
+$("#btn-return-order").addEventListener("click", (e) => busy(e.target, async () => {
+  let tracking = null;
+  if (state.order.channel === "mail") {
+    tracking = prompt("Numéro de suivi de l'envoi de retour (facultatif) :");
+    if (tracking === null) return;
+  } else if (!confirm("Confirmer que les cartes ont été remises au client ?")) return;
+  state.order = await api("POST", `/api/orders/${state.order.id}/return`, { tracking_out: tracking || null });
+  renderOrder();
+}));
+
+$("#btn-cancel-order").addEventListener("click", (e) => busy(e.target, async () => {
+  if (!confirm("Annuler cette commande ?")) return;
+  state.order = await api("POST", `/api/orders/${state.order.id}/cancel`);
+  renderOrder();
+}));
+
+$("#btn-export-client").addEventListener("click", () => {
+  // Access request: the file is downloaded and the request is logged by the server.
+  window.location.href = `/api/clients/${state.order.client_id}/export`;
+});
+
+$("#btn-anonymize-client").addEventListener("click", (e) => busy(e.target, async () => {
+  const reason = prompt(
+    "Anonymisation IRRÉVERSIBLE : nom, coordonnées, adresses et notes seront effacés ; " +
+    "les résultats de gradation sont conservés.\n\nMotif (ex. « Demande du client ») :");
+  if (!reason) return;
+  await api("POST", `/api/clients/${state.order.client_id}/anonymize`, { reason, confirm: true });
+  toast("Client anonymisé.");
+  state.client = null;
+  await refreshOrder();
+}));
+
+// -- Carte ------------------------------------------------------------------------------
+async function prepareCardScreen() {
   state.cardTypes = await api("GET", "/api/card-types");
   $("#card-type").innerHTML = '<option value="">Type de carte…</option>' +
     state.cardTypes.map((t) => `<option value="${t.id}">${esc(t.name)} (${t.width_mm}×${t.height_mm} mm)</option>`).join("");
+  $("#card-order").textContent = state.order.number;
+  cardForm.reset(); clearIdentity(); identifyMessage(""); $("#candidates").innerHTML = "";
+  $("#btn-identify").hidden = $("#btn-identify-camera").hidden = $("#sim-identify").hidden = true;
   show("card");
 }
 
-// -- Carte ------------------------------------------------------------------------------
 const cardForm = $("#card-form");
 const IDENTITY_FIELDS = ["rarity", "external_source", "external_id", "reference_image_url"];
 
@@ -177,13 +367,12 @@ $("#btn-unidentify").addEventListener("click", clearIdentity);
 $("#card-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target)); for (const k in body) if (!body[k]) body[k] = null;
-  body.client_id = state.client.id; body.card_type_id = Number(body.card_type_id);
+  body.client_id = state.order.client_id; body.order_id = state.order.id;
+  body.card_type_id = Number(body.card_type_id);
   if (body.year) body.year = Number(body.year);
   try {
     const card = await api("POST", "/api/cards", body);
     openSession(await api("POST", "/api/sessions", { card_id: card.id }));
-    e.target.reset(); clearIdentity(); identifyMessage("");
-    $("#btn-identify").hidden = $("#btn-identify-camera").hidden = $("#sim-identify").hidden = true;
   } catch (err) { toast(err.message); }
 });
 
@@ -221,7 +410,8 @@ $("#btn-analyze").addEventListener("click", (e) => busy(e.target, async () => {
 }));
 $("#btn-cancel").addEventListener("click", (e) => busy(e.target, async () => {
   if (!confirm("Annuler cette gradation ?")) return;
-  await api("POST", `/api/sessions/${state.session.id}/cancel`); show("home");
+  await api("POST", `/api/sessions/${state.session.id}/cancel`);
+  show(state.order ? "order-detail" : "home");
 }));
 
 async function refreshSim() {
@@ -269,8 +459,16 @@ function renderResult() {
     `<tr><td>${CRITERIA_LABELS[g.criterion] || g.criterion}</td><td>${g.value}</td>
      <td class="muted">${g.source === "auto" ? "mesure machine" : "opérateur"}</td></tr>`).join("");
   $("#explanation").innerHTML = (s.explanation || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  $("#result-order-actions").hidden = !state.order;
+  $("#btn-result-home").hidden = !!state.order;
   show("result");
 }
+
+$("#btn-next-card").addEventListener("click", async () => {
+  await refreshOrder();
+  if (["returned", "cancelled"].includes(state.order.status)) return show("order-detail");
+  prepareCardScreen();
+});
 
 document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => show(b.dataset.go)));
 loadStatus().then(() => show("home")).catch((err) => toast(err.message));

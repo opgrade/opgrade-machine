@@ -1,5 +1,16 @@
 from .db import init_db, make_engine
-from .models import Base, Capture, Card, CardType, Client, GradingSession, Measurement, Subgrade
+from .models import (
+    Base,
+    Capture,
+    Card,
+    CardType,
+    Client,
+    ConsentRecord,
+    GradingSession,
+    Measurement,
+    Order,
+    Subgrade,
+)
 
 __all__ = [
     "Base",
@@ -7,6 +18,8 @@ __all__ = [
     "Card",
     "CardType",
     "Client",
+    "ConsentRecord",
+    "Order",
     "GradingSession",
     "Measurement",
     "Subgrade",

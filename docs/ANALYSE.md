@@ -461,3 +461,55 @@ complet de 19 666 cartes physiques, requêtes en haute résolution passées par 
 Temps : ~1,5 s par carte sur PC quand l'OCR est nécessaire (à mesurer sur le Pi 5). Les 2 cartes
 restantes : numéro non lu → message d'avertissement, l'opérateur choisit. À revalider sur de
 vraies photos (reflets, impression fine des cartes anciennes).
+
+---
+
+## 16. Commandes et protection des renseignements personnels (Loi 25)
+
+### Commandes / lots
+
+Une **commande** regroupe les cartes remises par un client : comptoir, boutique/revendeur ou
+envoi postal. Numéro lisible `OPG-AAAA-NNNNNN`.
+
+| Statut | Passage |
+|---|---|
+| Reçue | création |
+| En cours | automatique, dès qu'une carte est mise en gradation |
+| Gradée | automatique, quand **toutes** les cartes ont une gradation terminée |
+| Retournée | manuel, une fois gradée (n° de suivi de retour pour un envoi postal) |
+| Annulée | manuel, avant le retour |
+
+Une commande retournée ou annulée n'accepte plus de cartes ni de gradations. Ajouter une carte à
+une commande gradée la repasse « En cours ».
+
+### Loi 25 — ce que fait le logiciel
+
+| Exigence | Mise en œuvre |
+|---|---|
+| Collecte minimale | Nom + **un** moyen de contact ; adresse de retour **seulement** pour un envoi postal |
+| Consentement manifeste, éclairé, à des fins précises | Avis affiché à l'écran (FR/EN), case obligatoire, mode de recueil noté (écran, papier, verbal, courriel) |
+| Consentement distinct pour les autres usages | Infolettre/offres : case séparée, **décochée par défaut** |
+| Nouvelles fins = nouveau consentement | L'avis est versionné (`rules/privacy.yaml`) ; si la version change, le consentement doit être recueilli à nouveau avant toute nouvelle commande |
+| Preuve | Registre `consent_records` (consentements, demandes d'accès, anonymisations), sans renseignement personnel, conservé après anonymisation |
+| Droit d'accès | Export JSON complet du dossier, demande consignée |
+| Droit de rectification | Modification de la fiche (au moins un contact obligatoire) |
+| Droit à la suppression / retrait du consentement | **Anonymisation** : nom, coordonnées, adresses, n° de suivi et notes effacés ; les résultats de gradation restent (vérification des certificats). Refusée tant qu'une commande est en cours |
+| Durée de conservation limitée | `retention_years` (3 ans par défaut) après la dernière activité ; liste des dossiers échus + anonymisation en lot |
+
+### À faire par OpGrade (hors logiciel)
+
+1. **Désigner et publier le responsable de la protection des renseignements personnels**
+   (par défaut, la personne ayant la plus haute autorité) et renseigner `rules/privacy.yaml`.
+   L'interface affiche un avertissement tant que ce n'est pas fait.
+2. Faire **valider l'avis et la durée de conservation par un juriste**.
+3. Tenir un **registre des incidents de confidentialité** et une procédure d'avis à la Commission
+   d'accès à l'information en cas d'incident à risque de préjudice sérieux.
+4. Avant la synchronisation avec le serveur central (V2) : évaluer les facteurs relatifs à la vie
+   privée (lieu d'hébergement, hors Québec ?), mettre à jour l'avis et **incrémenter sa version**.
+
+### Limites actuelles
+
+- Pas encore de comptes ni de rôles : l'export, l'anonymisation et la purge doivent être réservés
+  à l'administrateur dès que l'authentification existera (V1.x).
+- La purge de conservation est déclenchée à la main (API) ; prévoir une tâche planifiée.
+- Les sauvegardes futures devront appliquer les anonymisations (ou expirer dans le délai).
