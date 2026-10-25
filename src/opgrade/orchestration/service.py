@@ -16,7 +16,16 @@ from ..calibration.store import ActiveCalibration
 from ..config import Settings
 from ..customers.orders import refresh_status
 from ..data.models import Capture, Card, CardType, Defect, GradingSession, Measurement, Subgrade
-from ..grading import GradingRules, centering_grade, compute_final_grade, suggest_surface_grade
+from ..grading import (
+    GradingRules,
+    centering_grade,
+    compute_final_grade,
+    corner_points,
+    edge_points,
+    suggest_corners_grade,
+    suggest_edges_grade,
+    suggest_surface_grade,
+)
 from ..hardware.base import Hardware, LightingMode, Side
 from ..reports.certificates import assign_certificate
 from ..vision import (
@@ -31,9 +40,11 @@ from ..vision import (
     rectify,
 )
 from ..vision.surface import analyze_surface, annotate_surface
+from ..vision.wear import CORNER_ZONE_MM, analyze_wear, annotate_wear
 from .state_machine import CAPTURE_SIDE, INSTRUCTIONS, SessionState, check_transition
 
 log = logging.getLogger(__name__)
+DEFAULT_CORNER_RADIUS_MM = 3.0
 OPERATOR_CRITERIA = ("corners", "edges", "surface")
 
 
@@ -55,6 +66,7 @@ class Acquisition:
     quality: QualityReport
     # Same card position under other lights, rectified with the SAME outline: pixel-aligned.
     extra: dict[LightingMode, np.ndarray] = field(default_factory=dict)
+    silhouette: np.ndarray | None = None  # rectified backlit outline (corner/edge shape check)
 
 
 @dataclass
@@ -64,9 +76,13 @@ class CaptureOutcome:
     capture: Capture | None = None
 
 
-def surface_image_path(gs: GradingSession, side: Side) -> str:
-    """Annotated surface image (diffuse photo + relief map + numbered defects), relative path."""
-    return (Path("images") / gs.uuid / f"{side.value}_surface.png").as_posix()
+def analysis_image_path(gs: GradingSession, side: Side) -> str:
+    """Annotated analysis image (surface relief + numbered defects, corner/edge wear), relative path."""
+    return (Path("images") / gs.uuid / f"{side.value}_analysis.png").as_posix()
+
+
+def _severity(points: int) -> str:
+    return "minor" if points <= 1 else "moderate" if points <= 3 else "major"
 
 
 class GradingService:
@@ -153,7 +169,8 @@ class GradingService:
             raise AcquisitionError(" ".join(quality.problems))
         extra = {light: rectify(self._correct_lens(image), detection.quad, w, h).warped
                  for light, image in extra_raw.items()}
-        return Acquisition(raw, detection, quality, extra)
+        rectified_silhouette = rectify(silhouette, detection.quad, w, h).warped if silhouette is not None else None
+        return Acquisition(raw, detection, quality, extra, rectified_silhouette)
 
     # -- workflow --------------------------------------------------------------------------
 
@@ -214,7 +231,10 @@ class GradingService:
             sharpness=quality.sharpness,
         )
         gs.captures.append(cap)
-        for light, warped in acq.extra.items():
+        images = dict(acq.extra)
+        if acq.silhouette is not None:
+            images[LightingMode.BACKLIGHT] = acq.silhouette
+        for light, warped in images.items():
             rel = (rel_dir / f"{side.value}_{light.value}.png").as_posix()
             cv2.imwrite(str(self._abs(rel)), warped)
             # Raking: only the rectified image is kept (a raw 12 MP PNG per light is too slow on the Pi).
@@ -259,16 +279,23 @@ class GradingService:
         gs.confidence = confidence
         gs.needs_review = True  # corners/edges/surface come from the operator in V1
         message = INSTRUCTIONS[SessionState.AWAIT_REVIEW]
-        surface = self._analyze_surface(gs)
+        annotated = {side: self._load_warped(gs, side) for side in (Side.FRONT, Side.BACK)}
+        surface = self._analyze_surface(gs, annotated)
         if surface is not None:
             message += f" Surface : {surface} défaut(s) détecté(s) sous éclairage rasant."
+        wear, unmeasurable = self._analyze_wear(gs, annotated)
+        message += f" Coins et bordures : {wear} usure(s) détectée(s)."
+        if unmeasurable:
+            message += f" {unmeasurable} coin(s)/bordure(s) à bordure claire : blanchiment non mesurable, vérifiez à l'œil."
+        for side, image in annotated.items():
+            cv2.imwrite(str(self._abs(analysis_image_path(gs, side))), image)
         if confidence < self.rules.review_confidence_threshold:
             message += " ATTENTION : centrage mesuré avec une faible confiance, vérifiez-le."
         self._move(gs, SessionState.AWAIT_REVIEW, message)
         db.commit()
         return gs
 
-    def _analyze_surface(self, gs: GradingSession) -> int | None:
+    def _analyze_surface(self, gs: GradingSession, annotated: dict) -> int | None:
         """Raking-light defects on both faces; stores them and a SUGGESTED surface grade (the
         operator still decides). Returns the number of defects, or None without raking captures."""
         scores = {}
@@ -286,7 +313,7 @@ class GradingService:
                 gs.defects.append(Defect(side=side.value, criterion="surface", source="auto", **{
                     k: getattr(d, k) for k in ("kind", "x_mm", "y_mm", "w_mm", "h_mm", "length_mm", "area_mm2",
                                                "contrast", "severity", "lighting")}))
-            cv2.imwrite(str(self._abs(surface_image_path(gs, side))), annotate_surface(diffuse, result))
+            annotated[side] = annotate_surface(annotated[side], result)
             scores[side] = result.score
             gs.measurements.append(Measurement(side=side.value, name="surface_defect_score",
                                                value=result.score, unit="points"))
@@ -294,7 +321,62 @@ class GradingService:
         if suggestion is not None:
             gs.measurements.append(Measurement(side=None, name="surface_suggested_grade",
                                                value=suggestion, unit="grade"))
-        return len(gs.defects)
+        return sum(1 for d in gs.defects if d.criterion == "surface")
+
+    def _analyze_wear(self, gs: GradingSession, annotated: dict) -> tuple[int, int]:
+        """Corner and edge wear on both faces: stores defects and SUGGESTED corner/edge grades.
+        Returns (number of wear defects, number of corners/edges that could not be judged)."""
+        radius = gs.card.card_type.corner_radius_mm or DEFAULT_CORNER_RADIUS_MM
+        corner_total = edge_total = 0
+        count = unmeasurable = 0
+        for side in (Side.FRONT, Side.BACK):
+            diffuse = self._load_warped(gs, side)
+            has_silhouette = any(c.side == side.value and c.lighting == LightingMode.BACKLIGHT.value for c in gs.captures)
+            silhouette = self._load_warped(gs, side, LightingMode.BACKLIGHT) if has_silhouette else None
+            result = analyze_wear(diffuse, silhouette, radius)
+            annotated[side] = annotate_wear(annotated[side], result)
+            side_points = {"corners": 0, "edges": 0}
+            z = CORNER_ZONE_MM
+            fw, fh = diffuse.shape[1] / 10, diffuse.shape[0] / 10  # face size, mm
+            origin = {"tl": (0, 0), "tr": (fw - z, 0), "br": (fw - z, fh - z), "bl": (0, fh - z)}
+            for c in result.corners:
+                unmeasurable += not c.measurable
+                x, y = origin[c.name]
+                for kind, value, pts in (
+                    ("whitening", c.whitening_mm2, corner_points(self.rules, c.whitening_mm2, 0)),
+                    ("missing", c.missing_mm2, corner_points(self.rules, 0, c.missing_mm2)),
+                ):
+                    if pts:
+                        side_points["corners"] += pts
+                        gs.defects.append(Defect(side=side.value, criterion="corners", kind=kind, x_mm=x, y_mm=y,
+                                                 w_mm=z, h_mm=z, length_mm=0.0, area_mm2=round(value, 3), contrast=0.0,
+                                                 severity=_severity(pts), lighting="backlight" if kind == "missing" else "diffuse",
+                                                 location=c.name, source="auto"))
+            for e in result.edges:
+                unmeasurable += not e.measurable
+                for kind, pts, length, area in (
+                    ("whitening", edge_points(self.rules, e.whitened_length_mm, 0), e.whitened_length_mm, 0.0),
+                    ("nick", edge_points(self.rules, 0, e.nicks), 0.0, e.nick_area_mm2),
+                ):
+                    if pts:
+                        side_points["edges"] += pts
+                        gs.defects.append(Defect(side=side.value, criterion="edges", kind=kind, x_mm=0.0, y_mm=0.0,
+                                                 w_mm=0.0, h_mm=0.0, length_mm=round(length, 2), area_mm2=round(area, 3),
+                                                 contrast=0.0, severity=_severity(pts),
+                                                 lighting="backlight" if kind == "nick" else "diffuse",
+                                                 location=e.name, source="auto"))
+            for criterion, value in side_points.items():
+                gs.measurements.append(Measurement(side=side.value, name=f"{criterion}_wear_score", value=value, unit="points"))
+            corner_total += side_points["corners"]
+            edge_total += side_points["edges"]
+            count += sum(1 for d in gs.defects if d.side == side.value and d.criterion in ("corners", "edges"))
+        for name, grade in (("corners_suggested_grade", suggest_corners_grade(self.rules, corner_total)),
+                            ("edges_suggested_grade", suggest_edges_grade(self.rules, edge_total))):
+            if grade is not None:
+                gs.measurements.append(Measurement(side=None, name=name, value=grade, unit="grade"))
+        if unmeasurable:
+            gs.measurements.append(Measurement(side=None, name="wear_unmeasurable", value=unmeasurable, unit="count"))
+        return count, unmeasurable
 
     def submit_review(
         self,

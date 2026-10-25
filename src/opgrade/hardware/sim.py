@@ -39,6 +39,105 @@ class SimCardSpec:
     brightness: float = 1.0  # lighting variation between captures
     # Surface relief, visible mainly under raking light (scratches, dents).
     defects: list[SimDefect] = field(default_factory=list)
+    corner_radius_mm: float = 3.0  # die-cut rounded corners of standard cards
+    # Corner and edge wear: whitening (ink chipped off) and dinged corners (material missing).
+    wear: list[SimWear] = field(default_factory=list)
+
+
+@dataclass
+class SimWear:
+    """Corner / edge wear, in the coordinates of the face given by `side`.
+
+    - "edge_whitening": `edge` in top/bottom/left/right, from `start_mm` to `end_mm` along it,
+      white specks up to `depth_mm` from the edge, coverage `density`;
+    - "corner_whitening": `corner` in tl/tr/br/bl, within `size_mm` of the corner;
+    - "corner_ding": material missing at `corner` (chamfer of `size_mm`); physical, so it is
+      seen on both faces (mirrored on the back) and on the backlit silhouette. Front coordinates.
+    """
+
+    kind: str
+    edge: str | None = None
+    corner: str | None = None
+    start_mm: float = 0.0
+    end_mm: float = 0.0
+    depth_mm: float = 0.6
+    size_mm: float = 2.0
+    density: float = 0.6
+    side: Side = Side.FRONT
+    seed: int = 0
+
+
+PAPER_WHITE = (232, 236, 238)  # BGR of the exposed card stock
+_MIRROR_CORNER = {"tl": "tr", "tr": "tl", "bl": "br", "br": "bl"}
+
+
+def _card_alpha(spec: SimCardSpec, side: Side, shape: tuple[int, int]) -> np.ndarray:
+    """255 inside the card outline: rounded corners minus dinged corners."""
+    h, w = shape
+    alpha = np.zeros(shape, np.uint8)
+    r = int(round(spec.corner_radius_mm * SIM_PX_PER_MM))
+    if r > 0:
+        cv2.rectangle(alpha, (r, 0), (w - 1 - r, h - 1), 255, -1)
+        cv2.rectangle(alpha, (0, r), (w - 1, h - 1 - r), 255, -1)
+        for cx, cy in ((r, r), (w - 1 - r, r), (r, h - 1 - r), (w - 1 - r, h - 1 - r)):
+            cv2.circle(alpha, (cx, cy), r, 255, -1, cv2.LINE_AA)
+    else:
+        alpha[:] = 255
+    for wear in spec.wear:
+        if wear.kind != "corner_ding":
+            continue
+        corner = wear.corner if side == Side.FRONT else _MIRROR_CORNER[wear.corner]
+        # The cut bites into the ROUNDED corner: the arc is r·(√2 − 1) from the corner point along
+        # the diagonal; the ding removes material 0.6·size beyond it (a chamfer at the corner
+        # point itself would only cut where there is no card).
+        depth_px = (spec.corner_radius_mm * (np.sqrt(2) - 1) + 0.6 * wear.size_mm) * SIM_PX_PER_MM
+        leg = depth_px * np.sqrt(2)
+        xs = {"tl": 0, "bl": 0, "tr": w - 1, "br": w - 1}[corner]
+        ys = {"tl": 0, "tr": 0, "bl": h - 1, "br": h - 1}[corner]
+        sx, sy = (1 if xs == 0 else -1), (1 if ys == 0 else -1)
+        tri = np.array([[xs, ys], [xs + sx * leg, ys], [xs, ys + sy * leg]], np.int32)
+        cv2.fillPoly(alpha, [tri], 0, cv2.LINE_AA)
+    return alpha
+
+
+def _apply_wear(face: np.ndarray, alpha: np.ndarray, spec: SimCardSpec, side: Side) -> np.ndarray:
+    """Whitening: ink chipped off near the outline, exposing white stock (also around dings)."""
+    items = [w for w in spec.wear if w.kind in ("edge_whitening", "corner_whitening") and w.side == side]
+    dings = [w for w in spec.wear if w.kind == "corner_ding"]
+    if not items and not dings:
+        return face
+    h, w = face.shape[:2]
+    # Pad with background: distanceTransform does not treat outside the image as background.
+    padded = cv2.copyMakeBorder((alpha > 127).astype(np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    dist_mm = cv2.distanceTransform(padded, cv2.DIST_L2, 5)[1:-1, 1:-1] / SIM_PX_PER_MM
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32) / SIM_PX_PER_MM
+    region = np.zeros((h, w), np.float32)
+    rng = np.random.default_rng(97)
+    for item in items:
+        if item.kind == "edge_whitening":
+            along = xx if item.edge in ("top", "bottom") else yy
+            near = {"top": yy, "bottom": (h - 1) / SIM_PX_PER_MM - yy,
+                    "left": xx, "right": (w - 1) / SIM_PX_PER_MM - xx}[item.edge]
+            sel = (along >= item.start_mm) & (along <= item.end_mm) & (near <= item.depth_mm + 0.5)
+        else:
+            cx = 0 if item.corner in ("tl", "bl") else (w - 1) / SIM_PX_PER_MM
+            cy = 0 if item.corner in ("tl", "tr") else (h - 1) / SIM_PX_PER_MM
+            sel = np.hypot(xx - cx, yy - cy) <= item.size_mm + spec.corner_radius_mm * 0.3
+        sel &= dist_mm <= item.depth_mm
+        speckle = cv2.GaussianBlur(np.random.default_rng(item.seed).random((h, w)).astype(np.float32), (0, 0), 1.2)
+        threshold = np.quantile(speckle, 1 - item.density)
+        region = np.maximum(region, (sel & (speckle >= threshold)).astype(np.float32))
+    for _ in dings:  # torn fibres along the new edge of a dinged corner
+        expected = _card_alpha(SimCardSpec(corner_radius_mm=spec.corner_radius_mm), side, (h, w)) > 127
+        lost = expected & (alpha <= 127)
+        if lost.any():
+            near_loss = cv2.dilate(lost.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+            region = np.maximum(region, (near_loss & (alpha > 127) & (rng.random((h, w)) < 0.7)).astype(np.float32))
+        break
+    if not region.any():
+        return face
+    region = cv2.GaussianBlur(region, (0, 0), 0.6)[..., None]
+    return (face * (1 - region) + np.array(PAPER_WHITE, np.float32) * region).astype(np.uint8)
 
 
 @dataclass
@@ -57,6 +156,28 @@ class SimDefect:
     width_mm: float = 0.2
     slope: float = 0.08
     side: Side = Side.FRONT
+
+
+def random_sim_wear(count: int, seed: int | None = None) -> list[SimWear]:
+    """Random corner/edge wear: whitening on either face, dinged corners."""
+    rng = np.random.default_rng(seed)
+    wear = []
+    for _ in range(count):
+        side = Side.FRONT if rng.random() < 0.5 else Side.BACK
+        kind = rng.choice(["edge_whitening", "corner_whitening", "corner_ding"], p=[0.45, 0.35, 0.2])
+        corner = str(rng.choice(["tl", "tr", "br", "bl"]))
+        if kind == "edge_whitening":
+            edge = str(rng.choice(["top", "right", "bottom", "left"]))
+            length = 63 if edge in ("top", "bottom") else 88
+            start = float(rng.uniform(8, length - 20))
+            wear.append(SimWear(kind, edge=edge, start_mm=start, end_mm=start + float(rng.uniform(3, 12)),
+                                depth_mm=0.6, density=0.6, side=side, seed=int(rng.integers(1000))))
+        elif kind == "corner_whitening":
+            wear.append(SimWear(kind, corner=corner, size_mm=float(rng.uniform(1.5, 3)), depth_mm=0.8,
+                                density=0.6, side=side, seed=int(rng.integers(1000))))
+        else:
+            wear.append(SimWear(kind, corner=corner, size_mm=float(rng.uniform(0.8, 2.0))))
+    return wear
 
 
 def random_sim_defects(count: int, seed: int | None = None) -> list[SimDefect]:
@@ -186,7 +307,7 @@ def _render_face(spec: SimCardSpec, side: Side) -> np.ndarray:
     w = int(round(spec.width_mm * SIM_PX_PER_MM))
     h = int(round(spec.height_mm * SIM_PX_PER_MM))
     if side == Side.FRONT and spec.front_image is not None:
-        return cv2.resize(spec.front_image, (w, h), interpolation=cv2.INTER_CUBIC)
+        return cv2.resize(spec.front_image[..., :3], (w, h), interpolation=cv2.INTER_CUBIC)
     rng = np.random.default_rng(spec.seed + (0 if side == Side.FRONT else 1000))
     border_px = spec.border_mm * SIM_PX_PER_MM
     if side == Side.FRONT:
@@ -222,13 +343,22 @@ def render_scene(spec: SimCardSpec | None, side: Side, lighting: LightingMode) -
     else:
         canvas = np.clip(rng.normal(14, 3, (CANVAS_H, CANVAS_W, 3)), 0, 255).astype(np.uint8)
     if spec is not None:
-        face = _shade(_render_face(spec, side), spec, side, lighting)
+        face = _render_face(spec, side)
+        alpha = _card_alpha(spec, side, face.shape[:2])
+        image = spec.front_image
+        if side == Side.FRONT and image is not None and image.ndim == 3 and image.shape[2] == 4:
+            # Catalog scan with transparency: its own outline is the card outline.
+            # Only fully opaque pixels: the semi-transparent anti-aliased rim is not card.
+            scan_alpha = cv2.resize(image[..., 3], (face.shape[1], face.shape[0]), interpolation=cv2.INTER_AREA)
+            opaque = cv2.erode(np.where(scan_alpha >= 250, 255, 0).astype(np.uint8), np.ones((3, 3), np.uint8))
+            alpha = np.minimum(alpha, opaque)
+        face = _shade(_apply_wear(face, alpha, spec, side), spec, side, lighting)
         h, w = face.shape[:2]
         cx, cy = CANVAS_W / 2, CANVAS_H / 2
         m = cv2.getRotationMatrix2D((w / 2, h / 2), spec.rotation_deg, 1.0)
         m[0, 2] += cx - w / 2
         m[1, 2] += cy - h / 2
-        mask = cv2.warpAffine(np.full((h, w), 255, np.uint8), m, (CANVAS_W, CANVAS_H))
+        mask = cv2.warpAffine(alpha, m, (CANVAS_W, CANVAS_H))
         if lighting == LightingMode.BACKLIGHT:  # opaque card: dark silhouette, colours irrelevant
             canvas[mask > 127] = 25
             return canvas

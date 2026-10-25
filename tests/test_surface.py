@@ -107,25 +107,25 @@ def test_multi_light_grading_end_to_end(ctx):
     api, app = ctx
     s = run_grading(api, app, SimCardSpec(defects=DEFECTS))
     lights = {(c["side"], c["lighting"]) for c in s["captures"]}
-    assert len(lights) == 10  # diffuse + 4 raking, both faces
-    front = [d for d in s["defects"] if d["side"] == "front"]
-    assert len(front) == 3 and not [d for d in s["defects"] if d["side"] == "back"]
+    assert len(lights) == 12  # backlit outline + diffuse + 4 raking, both faces
+    surface = [d for d in s["defects"] if d["criterion"] == "surface"]
+    assert len([d for d in surface if d["side"] == "front"]) == 3 and not [d for d in surface if d["side"] == "back"]
     suggested = next(m["value"] for m in s["measurements"] if m["name"] == "surface_suggested_grade")
     assert suggested == 4  # 2 major + 1 moderate on the front
     assert "Surface : 3 défaut(s)" in s["last_message"]
-    image = api.get(f"/api/sessions/{s['id']}/surface/front.png")
+    image = api.get(f"/api/sessions/{s['id']}/analysis/front.png")
     assert image.status_code == 200 and image.headers["content-type"] == "image/png"
 
     done = api.post(f"/api/sessions/{s['id']}/review", json={"corners": 9, "edges": 9, "surface": suggested}).json()
     text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(api.get(f"/api/sessions/{s['id']}/report.pdf").content)).pages)
-    assert "Défauts de surface" in text and "rayure" in text and "majeur" in text
+    assert "Défauts détectés" in text and "Surface recto" in text and "rayure" in text and "majeur" in text
     assert done["final_grade"] <= 5  # surface 4 caps the final grade at 5
 
 
 def test_clean_card_suggests_10(ctx):
     api, app = ctx
     s = run_grading(api, app, SimCardSpec())
-    assert s["defects"] == []
+    assert not [d for d in s["defects"] if d["criterion"] == "surface"]
     assert next(m["value"] for m in s["measurements"] if m["name"] == "surface_suggested_grade") == 10
 
 
@@ -134,5 +134,5 @@ def test_raking_capture_can_be_disabled(tmp_path):
     with TestClient(app) as api:
         login(api)
         s = run_grading(api, app, SimCardSpec(defects=DEFECTS))
-    assert {c["lighting"] for c in s["captures"]} == {"diffuse"}
+    assert {c["lighting"] for c in s["captures"]} == {"diffuse", "backlight"}  # outline still kept
     assert not any(m["name"] == "surface_suggested_grade" for m in s["measurements"])

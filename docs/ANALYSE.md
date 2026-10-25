@@ -671,3 +671,53 @@ gradées.
 
 Écran de révision : images annotées recto/verso (carte du relief en rouge, défauts numérotés),
 liste des défauts. Rapport PDF : défauts encadrés sur les photos et liste numérotée.
+
+---
+
+## 21. Coins et bordures : blanchiment et matière manquante
+
+### Deux mesures indépendantes (`vision/wear.py`)
+
+1. **Blanchiment** (photo diffuse) : dans la bande extérieure (0,15–0,9 mm du bord), pixels plus
+   clairs **et** moins saturés que la couleur de la bordure mesurée juste à l'intérieur
+   (1,2–2,4 mm) : le carton blanc apparaît. Sur une bordure déjà très claire et saturée (jaune
+   Pokémon), c'est la **perte de couleur** qui compte, pas la luminosité.
+2. **Matière manquante** (silhouette rétroéclairée, désormais conservée) : contour réel comparé
+   au contour idéal (rectangle à coins arrondis). Coin cogné → surface manquante ; entaille
+   → manque le long d'une bordure.
+
+### Trois pièges rencontrés et corrigés (évaluation sur vraies cartes)
+
+| Problème | Effet | Correction |
+|---|---|---|
+| Rayon d'arrondi fixe (3 mm) | **160/160 coins** faussement « cognés » sur de vraies cartes (leur rayon diffère) | rayon **mesuré sur la carte** (2ᵉ plus petit des 4 coins : robuste à 2 coins abîmés) |
+| Bordures argentées, foil, texte blanc près du bord | fausses alertes de blanchiment | **test comparatif** : excès de pixels blanchâtres AU bord par rapport à juste à l'intérieur ; zone trop texturée → « non mesurable » |
+| Bordure jaune vif | blanchiment invisible au critère de luminosité | seuil de luminosité plafonné : la perte de saturation suffit |
+
+### Résultats (`scripts/eval_wear.py`, 40 vraies cartes, usure simulée, bruit σ = 2)
+
+| | Résultat |
+|---|---|
+| Fausses alertes coins | 2 / 160 |
+| Fausses alertes bordures | 12 / 160 (cartes modernes à bordure argentée, full art ; souvent < 3 mm) |
+| Non mesurables (bordure claire/texturée) | 7 / 320 |
+| Blanchiment de coin détecté | 40 / 40 |
+| Coin cogné détecté | 40 / 40 |
+| Blanchiment de bordure détecté | 27 / 40 — manqués surtout sur bordures blanches/argentées où le carton blanc est physiquement presque invisible |
+
+Les scans catalogue sans transparence sont écartés de l'évaluation : leur bord contient le fond
+du scanner (faux blanchiment, artefact des données ; sur la machine, le contour vient de la
+silhouette).
+
+### Notes proposées
+
+Points par coin (blanchiment + matière manquante) et par bordure (longueur blanchie, à partir de
+1 mm ; entailles) → barèmes `corners_suggestion` / `edges_suggestion` des règles (version
+**2026.10-3**, non étalonnés). Pré-sélectionnées à l'écran de révision, **l'opérateur décide** ;
+coins/bordures non mesurables signalés « à vérifier à l'œil ». Rayon d'arrondi réglable par type
+de carte (`corner_radius_mm`).
+
+**Limites** : simulateur sans épaisseur de carte, sans fibres réelles ni reflets ; bordures
+blanches et argentées peu fiables pour le blanchiment ; à 10 px/mm, le blanchiment très fin
+(< 0,1 mm) échappe. Pistes : zoom des coins à résolution native, éclairage rasant pour le
+relief des coins.

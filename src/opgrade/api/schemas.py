@@ -142,6 +142,7 @@ class CardTypeIn(BaseModel):
     thickness_mm: float | None = None
     has_border: bool = True
     catalog: CatalogId | None = None
+    corner_radius_mm: float | None = Field(default=None, ge=0, le=10)
 
 
 class CardTypeOut(ORM, CardTypeIn):
@@ -204,6 +205,7 @@ class DefectOut(ORM):
     area_mm2: float
     severity: str
     lighting: str | None
+    location: str | None = None
 
 
 class SubgradeOut(ORM):
@@ -301,6 +303,8 @@ class SimCardIn(BaseModel):
     blur: float = Field(0, ge=0, le=10)
     # Random surface damage on the front (scratches and dents), seen under raking light.
     random_defects: int = Field(0, ge=0, le=10)
+    # Random corner/edge wear (whitening, dinged corners).
+    random_wear: int = Field(0, ge=0, le=10)
 
 
 # -- accounts --------------------------------------------------------------------------------

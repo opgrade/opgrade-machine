@@ -688,6 +688,10 @@ async function refreshSim() {
   document.querySelectorAll(".sim-label").forEach((el) => (el.textContent = t.label ? "« " + t.label + " »" : "carte synthétique"));
 }
 $("#sim-flip").addEventListener("click", async () => { await api("POST", "/api/sim/flip"); refreshSim(); });
+$("#sim-worn").addEventListener("click", async () => {
+  await api("POST", "/api/sim/place", { random_wear: 4 });
+  refreshSim();
+});
 $("#sim-damaged").addEventListener("click", async () => {
   await api("POST", "/api/sim/place", { random_defects: 3 });
   refreshSim();
@@ -716,24 +720,55 @@ function renderReview() {
 const SEVERITY = { minor: "mineur", moderate: "moyen", major: "majeur" };
 const DEFECT_KIND = { scratch: "rayure", mark: "marque / creux" };
 const SIDE_LABEL = { front: "Recto", back: "Verso" };
+const CRITERION_LABEL = { surface: "Surface", corners: "Coins", edges: "Bordures" };
+const LOCATION_LABEL = {
+  tl: "coin haut gauche", tr: "coin haut droit", br: "coin bas droit", bl: "coin bas gauche",
+  top: "bordure du haut", right: "bordure droite", bottom: "bordure du bas", left: "bordure gauche",
+};
+const WEAR_KIND = { whitening: "blanchiment", missing: "matière manquante", nick: "entaille" };
 const LIGHT_LABEL = { raking_north: "lumière nord", raking_south: "lumière sud", raking_east: "lumière est", raking_west: "lumière ouest" };
 
+function measurement(s, name) {
+  const m = s.measurements.find((x) => x.name === name);
+  return m ? m.value : null;
+}
+
+function defectLine(d, n) {
+  if (d.criterion === "surface") {
+    const size = d.kind === "scratch" ? `${d.length_mm.toFixed(1)} mm` : `${d.area_mm2.toFixed(1)} mm²`;
+    return `n° ${n} : ${DEFECT_KIND[d.kind] || d.kind}, ${size}`;
+  }
+  const size = d.kind === "whitening" && d.criterion === "edges" ? `${d.length_mm.toFixed(1)} mm` : `${d.area_mm2.toFixed(2)} mm²`;
+  return `${LOCATION_LABEL[d.location] || d.location} : ${WEAR_KIND[d.kind] || d.kind}, ${size}`;
+}
+
 function renderSurface(s, form) {
-  const analysed = s.measurements.some((m) => m.name === "surface_defect_score");
+  const proposals = { surface: "surface_suggested_grade", corners: "corners_suggested_grade", edges: "edges_suggested_grade" };
+  const analysed = Object.values(proposals).some((name) => measurement(s, name) !== null);
   $("#surface-info").hidden = !analysed;
   if (!analysed) return;
-  const suggestion = s.measurements.find((m) => m.name === "surface_suggested_grade");
-  $("#surface-summary").textContent = `— ${s.defects.length} défaut(s) détecté(s)` +
-    (suggestion ? ` · note proposée : ${suggestion.value} (à confirmer)` : "");
-  if (suggestion) form.surface.value = String(suggestion.value);  // pre-selected, operator decides
-  for (const side of ["front", "back"]) $("#surface-" + side).src = `/api/sessions/${s.id}/surface/${side}.png?t=${s.id}`;
-  const bySide = { front: 0, back: 0 };
-  $("#surface-defects").innerHTML = s.defects.map((d) => {
-    bySide[d.side] += 1;
-    const size = d.kind === "scratch" ? `${d.length_mm.toFixed(1)} mm` : `${d.area_mm2.toFixed(1)} mm²`;
-    return `<li class="sev-${d.severity}">${SIDE_LABEL[d.side]} n° ${bySide[d.side]} : ${DEFECT_KIND[d.kind] || d.kind},
-      ${size}, <b>${SEVERITY[d.severity]}</b> <span class="muted">(${esc(LIGHT_LABEL[d.lighting] || d.lighting || "")})</span></li>`;
-  }).join("") || '<li class="muted">Aucun défaut de surface détecté.</li>';
+  const parts = [];
+  for (const [criterion, name] of Object.entries(proposals)) {
+    const grade = measurement(s, name);
+    if (grade === null) continue;
+    form[criterion].value = String(grade);  // pre-selected, the operator decides
+    const n = s.defects.filter((d) => d.criterion === criterion).length;
+    parts.push(`${CRITERION_LABEL[criterion]} : ${n} défaut(s), note proposée <b>${grade}</b>`);
+  }
+  const unmeasurable = measurement(s, "wear_unmeasurable");
+  $("#surface-summary").innerHTML = parts.join(" · ") +
+    (unmeasurable ? `<br><span class="warn-list">${unmeasurable} coin(s)/bordure(s) à bordure claire : blanchiment non mesurable, vérifiez à l'œil.</span>` : "");
+  for (const side of ["front", "back"]) $("#surface-" + side).src = `/api/sessions/${s.id}/analysis/${side}.png?t=${s.id}`;
+  const lines = [];
+  for (const criterion of ["corners", "edges", "surface"]) {
+    for (const side of ["front", "back"]) {
+      s.defects.filter((d) => d.criterion === criterion && d.side === side).forEach((d, i) => {
+        lines.push(`<li class="sev-${d.severity}">${CRITERION_LABEL[criterion]} · ${SIDE_LABEL[side]} ${defectLine(d, i + 1)},
+          <b>${SEVERITY[d.severity]}</b></li>`);
+      });
+    }
+  }
+  $("#surface-defects").innerHTML = lines.join("") || '<li class="muted">Aucun défaut détecté.</li>';
 }
 
 $("#review-form").addEventListener("submit", async (e) => {

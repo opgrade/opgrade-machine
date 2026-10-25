@@ -22,14 +22,14 @@ from ..customers.orders import check_card_can_join
 from ..data import Capture, Card, CardType, Client, GradingSession, Order, init_db, make_engine
 from ..grading import load_rules
 from ..hardware import Hardware, Side, build_hardware
-from ..hardware.sim import SimCardSpec, SimulatedCamera, random_sim_defects
+from ..hardware.sim import SimCardSpec, SimulatedCamera, random_sim_defects, random_sim_wear
 from ..identify import CardCatalog, CardQuery, CatalogError, build_catalog
 from ..identify.base import USER_AGENT
 from ..identify.ocr import NumberReader
 from ..identify.recognize import CardRecognizer
 from ..identify.visual import VisualIndex
 from ..orchestration import AcquisitionError, GradingService, InvalidTransition, WorkflowError
-from ..orchestration.service import surface_image_path
+from ..orchestration.service import analysis_image_path
 from ..auth import AuthError, audit
 from ..data import User
 from . import auth as auth_api
@@ -262,13 +262,13 @@ def create_app(
             raise HTTPException(404, "Image introuvable.")
         return FileResponse(path, media_type="image/png")
 
-    @app.get("/api/sessions/{session_id}/surface/{side}.png")
-    def surface_image(session_id: int, side: Side, db: Session = Depends(get_db)):
-        """Diffuse photo with the raking-light relief map and numbered defects."""
+    @app.get("/api/sessions/{session_id}/analysis/{side}.png")
+    def analysis_image(session_id: int, side: Side, db: Session = Depends(get_db)):
+        """Diffuse photo annotated with surface relief/defects and corner/edge wear."""
         gs = get_session(db, session_id)
-        path = settings.data_dir / surface_image_path(gs, side)
+        path = settings.data_dir / analysis_image_path(gs, side)
         if not path.exists():
-            raise HTTPException(404, "Pas d'analyse de surface pour cette face.")
+            raise HTTPException(404, "Pas d'image d'analyse pour cette face.")
         return FileResponse(path, media_type="image/png")
 
     # -- simulation -----------------------------------------------------------------------
@@ -306,7 +306,8 @@ def create_app(
         def sim_place(body: schemas.SimCardIn | None = None) -> dict:
             fields = body.model_dump() if body else {}
             n_defects = fields.pop("random_defects", 0)
-            spec = SimCardSpec(**fields, defects=random_sim_defects(n_defects))
+            n_wear = fields.pop("random_wear", 0)
+            spec = SimCardSpec(**fields, defects=random_sim_defects(n_defects), wear=random_sim_wear(n_wear))
             table.place(spec, Side.FRONT)
             return sim_table()
 

@@ -119,6 +119,7 @@ class CardType(Base):
     has_border: Mapped[bool] = mapped_column(Boolean, default=True)
     # Online catalog used to identify cards of this type (see identify.CATALOGS); None = manual entry.
     catalog: Mapped[str | None] = mapped_column(String(30))
+    corner_radius_mm: Mapped[float | None] = mapped_column(Float)  # None: 3.0 mm (standard die cut)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -313,4 +314,5 @@ class Defect(Base):
     contrast: Mapped[float] = mapped_column(Float)
     severity: Mapped[str] = mapped_column(String(20))  # minor | moderate | major
     lighting: Mapped[str | None] = mapped_column(String(30))
+    location: Mapped[str | None] = mapped_column(String(20))  # corner (tl, tr, br, bl) or edge (top, ...)
     source: Mapped[str] = mapped_column(String(20), default="auto")

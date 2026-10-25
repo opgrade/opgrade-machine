@@ -1,6 +1,6 @@
 # Règles de gradation OpGrade. Toute modification DOIT incrémenter `version`
 # (la version est enregistrée dans chaque analyse).
-version: "2026.10-2"
+version: "2026.10-3"
 
 scale:
   min: 1
@@ -55,4 +55,43 @@ surface_suggestion:
     - { max_score: 9, grade: 6 }
     - { max_score: 12, grade: 5 }
     - { max_score: 18, grade: 4 }
+  fallback_grade: 3
+
+# Coins et bordures : notes PROPOSÉES à l'opérateur (recto et verso comptent autant).
+# Points par coin = palier atteint en blanchiment + palier atteint en matière manquante.
+# Points par bordure = palier atteint en longueur blanchie + nick_points par entaille.
+# Barèmes initiaux NON ÉTALONNÉS.
+corners_suggestion:
+  whitening_mm2:
+    - { min: 0.1, points: 1 }
+    - { min: 0.5, points: 2 }
+    - { min: 1.5, points: 4 }
+  missing_mm2:
+    - { min: 0.05, points: 2 }
+    - { min: 0.3, points: 4 }
+    - { min: 1.0, points: 8 }
+  steps:
+    - { max_score: 0, grade: 10 }
+    - { max_score: 1, grade: 9 }
+    - { max_score: 3, grade: 8 }
+    - { max_score: 6, grade: 7 }
+    - { max_score: 10, grade: 6 }
+    - { max_score: 15, grade: 5 }
+    - { max_score: 22, grade: 4 }
+  fallback_grade: 3
+
+edges_suggestion:
+  whitening_mm:
+    - { min: 1.0, points: 1 }  # shorter specks: too often foil/silver texture on modern cards
+    - { min: 3.0, points: 2 }
+    - { min: 10.0, points: 4 }
+  nick_points: 2
+  steps:
+    - { max_score: 0, grade: 10 }
+    - { max_score: 1, grade: 9 }
+    - { max_score: 3, grade: 8 }
+    - { max_score: 6, grade: 7 }
+    - { max_score: 10, grade: 6 }
+    - { max_score: 15, grade: 5 }
+    - { max_score: 22, grade: 4 }
   fallback_grade: 3

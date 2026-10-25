@@ -32,6 +32,25 @@ class SurfaceSuggestion(BaseModel):
     fallback_grade: float = 1
 
 
+class PointStep(BaseModel):
+    min: float
+    points: int
+
+
+class CornersSuggestion(BaseModel):
+    whitening_mm2: list[PointStep]
+    missing_mm2: list[PointStep]
+    steps: list[SurfaceStep]
+    fallback_grade: float = 1
+
+
+class EdgesSuggestion(BaseModel):
+    whitening_mm: list[PointStep]
+    nick_points: int = 2
+    steps: list[SurfaceStep]
+    fallback_grade: float = 1
+
+
 class Scale(BaseModel):
     min: float = 1
     max: float = 10
@@ -46,6 +65,8 @@ class GradingRules(BaseModel):
     centering: CenteringRules
     review_confidence_threshold: float = 0.8
     surface_suggestion: SurfaceSuggestion | None = None
+    corners_suggestion: CornersSuggestion | None = None
+    edges_suggestion: EdgesSuggestion | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "GradingRules":
@@ -76,16 +97,44 @@ def centering_grade(rules: GradingRules, front_worst_share: float, back_worst_sh
     )
 
 
+def _grade_for_score(steps: list[SurfaceStep], fallback: float, score: float) -> float:
+    for step in sorted(steps, key=lambda st: st.max_score):
+        if score <= step.max_score:
+            return step.grade
+    return fallback
+
+
+def _points(steps: list[PointStep], value: float) -> int:
+    """Points of the highest threshold reached (0 below the first one)."""
+    return max((s.points for s in steps if value >= s.min), default=0)
+
+
 def suggest_surface_grade(rules: GradingRules, front_score: float, back_score: float) -> float | None:
     """Surface grade proposed to the operator from raking-light defect points (None if no rule)."""
     s = rules.surface_suggestion
     if s is None:
         return None
-    score = front_score + s.back_weight * back_score
-    for step in sorted(s.steps, key=lambda st: st.max_score):
-        if score <= step.max_score:
-            return step.grade
-    return s.fallback_grade
+    return _grade_for_score(s.steps, s.fallback_grade, front_score + s.back_weight * back_score)
+
+
+def corner_points(rules: GradingRules, whitening_mm2: float, missing_mm2: float) -> int:
+    s = rules.corners_suggestion
+    return 0 if s is None else _points(s.whitening_mm2, whitening_mm2) + _points(s.missing_mm2, missing_mm2)
+
+
+def edge_points(rules: GradingRules, whitened_length_mm: float, nicks: int) -> int:
+    s = rules.edges_suggestion
+    return 0 if s is None else _points(s.whitening_mm, whitened_length_mm) + s.nick_points * nicks
+
+
+def suggest_corners_grade(rules: GradingRules, total_points: float) -> float | None:
+    s = rules.corners_suggestion
+    return None if s is None else _grade_for_score(s.steps, s.fallback_grade, total_points)
+
+
+def suggest_edges_grade(rules: GradingRules, total_points: float) -> float | None:
+    s = rules.edges_suggestion
+    return None if s is None else _grade_for_score(s.steps, s.fallback_grade, total_points)
 
 
 @dataclass
